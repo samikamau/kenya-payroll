@@ -629,6 +629,107 @@ function exportSHA(){
   downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_${c.period||''}.csv`);
 }
 
+/* ---------------- Bulk import ---------------- */
+const IMPORT_HEADERS = [
+  'Name','KRA PIN','National ID','NSSF Number','SHA Number','Payroll Number','Phone',
+  'Basic Salary','Allowances','Pension','Insurance Premium','Other Deductions',
+  'Residential Status','Employee Type','Disability','Exemption Certificate No',
+  'Identity Type','Benefit Description','Benefit Amount'
+];
+const IMPORT_FIELD_MAP = {
+  'name':'name', 'kra pin':'pin', 'national id':'idNumber', 'nssf number':'nssfNo', 'sha number':'shaNo',
+  'payroll number':'payrollNumber', 'phone':'phone', 'basic salary':'basic', 'allowances':'allowances',
+  'pension':'pension', 'insurance premium':'insurance', 'other deductions':'otherDeduct',
+  'residential status':'residentialStatus', 'employee type':'employeeType', 'disability':'disability',
+  'exemption certificate no':'exemptionCertNo', 'identity type':'identityType',
+  'benefit description':'benefitDescription', 'benefit amount':'benefitAmount'
+};
+const IMPORT_NUMERIC_FIELDS = ['basic','allowances','pension','insurance','otherDeduct','benefitAmount'];
+
+function exportImportTemplate(){
+  const rows = [IMPORT_HEADERS, [
+    'James Mbugua Njunge','A005431465N','25907329','2025146591','','HPL001','0700000000',
+    '30000','0','0','0','0','Resident','Primary Employee','No','','National ID','Benefit not given','0'
+  ]];
+  downloadCSV(rows, 'employee_import_template.csv');
+}
+
+function parseCSVText(text){
+  // Minimal RFC-4180 style parser: handles quoted fields, escaped quotes, commas inside quotes.
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for(let i = 0; i < text.length; i++){
+    const ch = text[i], next = text[i+1];
+    if(inQuotes){
+      if(ch === '"' && next === '"'){ field += '"'; i++; }
+      else if(ch === '"'){ inQuotes = false; }
+      else field += ch;
+    } else {
+      if(ch === '"') inQuotes = true;
+      else if(ch === ','){ row.push(field); field = ''; }
+      else if(ch === '\r'){ /* skip */ }
+      else if(ch === '\n'){ row.push(field); rows.push(row); row = []; field = ''; }
+      else field += ch;
+    }
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim() !== ''));
+}
+
+async function handleCSVImport(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const text = await file.text();
+  const rows = parseCSVText(text);
+  if(rows.length < 2){ alert('That file has no data rows to import.'); event.target.value = ''; return; }
+
+  const headerRow = rows[0].map(h => h.trim().toLowerCase());
+  const dataRows = rows.slice(1);
+
+  const newEmployees = dataRows.map(cells => {
+    const emp = {
+      name:'', pin:'', idNumber:'', nssfNo:'', shaNo:'', payrollNumber:'', phone:'',
+      basic:0, allowances:0, pension:0, insurance:0, otherDeduct:0,
+      residentialStatus:'Resident', employeeType:'Primary Employee', disability:'No',
+      exemptionCertNo:'', identityType:'National ID', benefitDescription:'Benefit not given', benefitAmount:0
+    };
+    headerRow.forEach((h, i) => {
+      const field = IMPORT_FIELD_MAP[h];
+      if(!field) return;
+      const raw = (cells[i]||'').trim();
+      emp[field] = IMPORT_NUMERIC_FIELDS.includes(field) ? (parseFloat(raw) || 0) : raw;
+    });
+    return emp;
+  }).filter(e => e.name); // skip rows with no name
+
+  if(newEmployees.length === 0){
+    alert('No valid rows found. Make sure the CSV has a "Name" column with values.');
+    event.target.value = '';
+    return;
+  }
+
+  const companyId = state.activeClient;
+  const dbRows = newEmployees.map(e => ({
+    company_id: companyId, name: e.name, pin: e.pin, id_number: e.idNumber, nssf_no: e.nssfNo, sha_no: e.shaNo,
+    payroll_number: e.payrollNumber, phone: e.phone, basic: e.basic, allowances: e.allowances,
+    pension: e.pension, insurance: e.insurance, other_deduct: e.otherDeduct,
+    residential_status: e.residentialStatus, employee_type: e.employeeType, disability: e.disability,
+    exemption_cert_no: e.exemptionCertNo, identity_type: e.identityType,
+    benefit_description: e.benefitDescription, benefit_amount: e.benefitAmount
+  }));
+
+  const { data, error } = await sb.from('employees').insert(dbRows).select();
+  if(error){ alert('Import failed: ' + error.message); event.target.value = ''; return; }
+
+  const c = state.clients[companyId];
+  data.forEach((row, idx) => {
+    c.employees.push({ id: row.id, ...newEmployees[idx] });
+  });
+  render();
+  alert(`Imported ${data.length} employee${data.length===1?'':'s'}.`);
+  event.target.value = '';
+}
+
 function exportCSV(){
   const c = state.clients[state.activeClient];
   const rows = [['Name','Basic','Allowances','Gross','NSSF','SHIF','Housing Levy','PAYE','Other Deductions','Net Pay','Employer Cost']];
@@ -740,8 +841,13 @@ function renderMain(){
       <button class="btn" onclick="exportNSSF()">NSSF return file</button>
       <button class="btn" onclick="exportSHA()">SHA/SHIF return file</button>
     </div>
+    <div class="actions">
+      <button class="btn" onclick="exportImportTemplate()">Download import template</button>
+      <button class="btn" onclick="document.getElementById('csvFileInput').click()">Import employees (CSV)</button>
+      <input type="file" id="csvFileInput" accept=".csv" style="display:none;" onchange="handleCSVImport(event)" />
+    </div>
     <div class="settings-note" style="margin-top:-16px;margin-bottom:26px;max-width:640px;">
-      These three exports match real KRA P10A, NSSF, and SHA sample templates column-for-column. Fill in KRA PIN, National ID, NSSF/SHA numbers, and payroll number per employee (click a row &rarr; Statutory identifiers) for a complete file. If any authority changes its template layout, bring me the new sample and I'll update the export to match.
+      These three exports match real KRA P10A, NSSF, and SHA sample templates column-for-column. Fill in KRA PIN, National ID, NSSF/SHA numbers, and payroll number per employee (click a row &rarr; Statutory identifiers) for a complete file, or bulk-load them with "Import employees (CSV)" using the template above. If any authority changes its template layout, bring me the new sample and I'll update the export to match.
     </div>
   `;
 }
