@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kenya Payroll Register</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --bg:#0B1626;
+    --panel:#12213A;
+    --panel-2:#16294A;
+    --gold:#B08D57;
+    --red:#A5382B;
+    --cream:#EFE7D6;
+    --ink:#EAF0F7;
+    --line:#233757;
+    --muted:#8FA3C4;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{font-family:'Fraunces',serif;font-weight:500;margin:0;}
+  .mono{font-family:'JetBrains Mono',monospace;}
+  .app{display:flex;min-height:100vh;}
+
+  /* Rail */
+  .rail{
+    width:230px;flex-shrink:0;background:var(--panel);
+    border-right:1px solid var(--line);padding:22px 16px;
+  }
+  .rail-title{font-size:13px;letter-spacing:.02em;color:var(--gold);font-family:'JetBrains Mono',monospace;margin-bottom:2px;}
+  .rail-sub{font-size:11px;color:var(--muted);margin-bottom:20px;}
+  .client-item{
+    padding:9px 10px;border-radius:4px;font-size:13.5px;cursor:pointer;
+    color:var(--muted);margin-bottom:2px;border:1px solid transparent;
+    display:flex;justify-content:space-between;align-items:center;gap:6px;
+  }
+  .client-item.active{background:var(--panel-2);color:var(--ink);border-color:var(--line);}
+  .client-item:hover{color:var(--ink);}
+  .client-item .del{opacity:0;font-size:11px;color:var(--red);}
+  .client-item:hover .del{opacity:.7;}
+  .client-item .del:hover{opacity:1;}
+  .add-client{
+    width:100%;margin-top:10px;padding:8px 10px;background:none;
+    border:1px dashed var(--line);color:var(--muted);border-radius:4px;
+    font-family:'Inter',sans-serif;font-size:12.5px;cursor:pointer;
+  }
+  .add-client:hover{color:var(--gold);border-color:var(--gold);}
+  .rail-footer{margin-top:28px;padding-top:16px;border-top:1px solid var(--line);}
+  .rail-btn{
+    width:100%;text-align:left;background:none;border:none;color:var(--muted);
+    font-family:'Inter',sans-serif;font-size:12px;padding:6px 2px;cursor:pointer;
+  }
+  .rail-btn:hover{color:var(--ink);}
+
+  /* Main */
+  .main{flex:1;padding:28px 34px 60px;max-width:1180px;}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;flex-wrap:wrap;gap:14px;}
+  .company-name-input{
+    background:none;border:none;color:var(--ink);font-family:'Fraunces',serif;
+    font-size:26px;font-weight:500;padding:0;outline:none;min-width:220px;
+  }
+  .company-name-input::placeholder{color:var(--muted);}
+  .period-row{display:flex;gap:10px;align-items:center;}
+  .period-row input{
+    background:var(--panel);border:1px solid var(--line);color:var(--ink);
+    border-radius:4px;padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:12.5px;
+  }
+
+  /* Summary cards */
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:26px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px;}
+  .card .label{font-size:11px;color:var(--muted);text-transform:none;margin-bottom:6px;}
+  .card .value{font-family:'JetBrains Mono',monospace;font-size:19px;color:var(--ink);}
+  .card.accent .value{color:var(--gold);}
+  .card.deduct .value{color:#C77B6E;}
+
+  /* Table */
+  .table-wrap{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:20px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{
+    text-align:left;padding:10px 12px;color:var(--muted);font-weight:500;
+    font-size:11px;border-bottom:1px solid var(--line);background:var(--panel-2);white-space:nowrap;
+  }
+  tbody td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:rgba(176,141,87,0.05);cursor:pointer;}
+  td input{
+    width:100%;background:none;border:none;color:var(--ink);font-family:'JetBrains Mono',monospace;
+    font-size:13px;padding:2px 0;outline:none;border-bottom:1px solid transparent;
+  }
+  td input:focus{border-bottom:1px solid var(--gold);}
+  td.name-cell input{font-family:'Inter',sans-serif;font-size:13.5px;}
+  td.num{font-family:'JetBrains Mono',monospace;text-align:right;}
+  td.num.net{color:var(--gold);font-weight:600;}
+  .row-del{color:var(--muted);opacity:0;cursor:pointer;font-size:14px;padding:0 4px;}
+  tr:hover .row-del{opacity:.6;}
+  .row-del:hover{opacity:1;color:var(--red);}
+  .add-row-btn{
+    display:block;width:100%;text-align:left;padding:10px 12px;background:none;
+    border:none;color:var(--muted);font-family:'Inter',sans-serif;font-size:12.5px;cursor:pointer;
+  }
+  .add-row-btn:hover{color:var(--gold);}
+
+  .actions{display:flex;gap:10px;margin-bottom:30px;}
+  .btn{
+    padding:8px 14px;border-radius:4px;font-family:'Inter',sans-serif;font-size:12.5px;
+    cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+  }
+  .btn:hover{border-color:var(--gold);color:var(--gold);}
+  .btn.primary{background:var(--gold);color:var(--bg);border-color:var(--gold);font-weight:600;}
+  .btn.primary:hover{opacity:.9;color:var(--bg);}
+
+  /* Drawer */
+  .drawer-backdrop{
+    position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;z-index:10;
+  }
+  .drawer-backdrop.open{display:block;}
+  .drawer{
+    position:fixed;top:0;right:0;height:100%;width:380px;max-width:92vw;
+    background:var(--panel);border-left:1px solid var(--line);z-index:11;
+    padding:26px 26px 30px;transform:translateX(100%);transition:transform .25s ease;
+    overflow-y:auto;
+  }
+  .drawer.open{transform:translateX(0);}
+  .drawer h2{font-size:22px;margin-bottom:2px;}
+  .drawer .role{color:var(--muted);font-size:12.5px;margin-bottom:20px;}
+  .payslip-section{margin-bottom:18px;}
+  .payslip-section h3{font-size:11px;text-transform:none;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:8px;letter-spacing:.02em;}
+  .payslip-line{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;border-bottom:1px solid var(--line);}
+  .payslip-line span:last-child{font-family:'JetBrains Mono',monospace;}
+  .payslip-line.total{font-weight:600;border-bottom:none;padding-top:8px;}
+  .payslip-line.net span:last-child{color:var(--gold);font-size:16px;}
+  .close-drawer{position:absolute;top:22px;right:22px;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;}
+  .close-drawer:hover{color:var(--ink);}
+
+  /* Settings panel */
+  .settings-panel{
+    background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    padding:18px 20px;margin-bottom:24px;
+  }
+  .settings-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-top:12px;}
+  .settings-field label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;}
+  .settings-field input{
+    width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
+    border-radius:4px;padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:12.5px;
+  }
+  .settings-note{font-size:11.5px;color:var(--muted);margin-top:14px;line-height:1.5;}
+  .empty-state{padding:60px 20px;text-align:center;color:var(--muted);}
+  .empty-state h2{color:var(--ink);margin-bottom:8px;}
+
+  /* Auth screen */
+  .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;}
+  .auth-box{width:340px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:32px;}
+  .auth-box h1{font-size:22px;margin-bottom:4px;}
+  .auth-box .sub{color:var(--muted);font-size:12.5px;margin-bottom:22px;}
+  .auth-field{margin-bottom:14px;}
+  .auth-field label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px;}
+  .auth-field input{
+    width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
+    border-radius:4px;padding:9px 10px;font-family:'Inter',sans-serif;font-size:13.5px;
+  }
+  .auth-error{color:#C77B6E;font-size:12.5px;margin-bottom:12px;min-height:16px;}
+  .auth-toggle{margin-top:16px;font-size:12.5px;color:var(--muted);text-align:center;}
+  .auth-toggle a{color:var(--gold);cursor:pointer;text-decoration:none;}
+  .user-badge{font-size:11.5px;color:var(--muted);padding:6px 2px;border-top:1px solid var(--line);margin-top:6px;padding-top:12px;word-break:break-all;}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div id="authScreen" class="auth-wrap" style="display:none;">
+  <div class="auth-box">
+    <h1 id="authTitle">Sign in</h1>
+    <div class="sub">Sami Accountants &middot; Payroll Register</div>
+    <div class="auth-error" id="authError"></div>
+    <div class="auth-field"><label>Email</label><input type="email" id="authEmail" /></div>
+    <div class="auth-field"><label>Password</label><input type="password" id="authPassword" onkeydown="if(event.key==='Enter') handleAuthSubmit()" /></div>
+    <button class="btn primary" style="width:100%;" id="authSubmit" onclick="handleAuthSubmit()">Sign in</button>
+    <div class="auth-toggle" id="authToggle">No account yet? <a onclick="toggleAuthMode()">Create one</a></div>
+  </div>
+</div>
+
+<div class="app" id="appRoot" style="display:none;">
+  <div class="rail">
+    <div class="rail-title">SAMI ACCOUNTANTS</div>
+    <div class="rail-sub">Payroll Register &middot; Kenya</div>
+    <div id="clientList"></div>
+    <button class="add-client" onclick="addClient()">+ Add client</button>
+    <div class="rail-footer">
+      <button class="rail-btn" onclick="toggleSettings()">Statutory rates &amp; settings</button>
+      <button class="rail-btn" onclick="handleSignOut()">Sign out</button>
+      <div class="user-badge" id="userBadge"></div>
+    </div>
+  </div>
+
+  <div class="main" id="mainArea"></div>
+</div>
+
+<div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <button class="close-drawer" onclick="closeDrawer()">&times;</button>
+  <div id="drawerContent"></div>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------
+   STATUTORY RATE CONFIG — Kenya, effective 1 Feb 2026.
+   Update these if KRA / NSSF / SHIF gazette new rates. Values also
+   editable live from the "Statutory rates & settings" panel.
+--------------------------------------------------------------------- */
+let RATES = {
+  nssfLEL: 9000,        // Tier I lower earnings limit
+  nssfUEL: 108000,      // Tier II upper earnings limit
+  nssfRate: 0.06,        // employee & employer, each
+  shifRate: 0.0275,      // % of gross
+  shifMin: 300,          // minimum monthly SHIF
+  ahlRate: 0.015,        // Affordable Housing Levy, employee & employer, each
+  personalRelief: 2400,  // monthly
+  insuranceReliefRate: 0.15,
+  insuranceReliefCap: 5000,
+  pensionReliefCap: 30000, // combined statutory + voluntary pension relief cap
+  nitaLevy: 50,          // per employee per month, employer cost
+  bands: [
+    { upTo: 24000, rate: 0.10 },
+    { upTo: 32333, rate: 0.25 },
+    { upTo: 500000, rate: 0.30 },
+    { upTo: 800000, rate: 0.325 },
+    { upTo: Infinity, rate: 0.35 }
+  ]
+};
+
+/* ---------------------------------------------------------------------
+   SUPABASE CONFIG — paste your project's values here.
+   Dashboard → Project Settings → API → Project URL / anon public key.
+   The anon key is safe to expose in frontend code; Row Level Security
+   (see schema.sql) is what actually restricts access to each user's own data.
+--------------------------------------------------------------------- */
+const SUPABASE_URL = 'https://fmargcknmofzpihujzdc.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_2-DM351xvcU2tXUIuX-vQg_CTpuRD3q';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let state = { clients: {}, activeClient: null, settingsOpen: false };
+let authMode = 'signin'; // or 'signup'
+
+function fmt(n){
+  n = Math.round(n||0);
+  return n.toLocaleString('en-KE');
+}
+const TEXT_FIELDS = ['name','pin','idNumber','nssfNo','shaNo'];
+const EMP_DB_FIELD = { name:'name', pin:'pin', idNumber:'id_number', nssfNo:'nssf_no', shaNo:'sha_no',
+                        basic:'basic', allowances:'allowances', pension:'pension', insurance:'insurance', otherDeduct:'other_deduct' };
+const CLIENT_DB_FIELD = { name:'name', period:'period', kraPin:'kra_pin', nssfEmployerNo:'nssf_employer_no', shaEmployerNo:'sha_employer_no' };
+
+function calcPAYE(taxable){
+  let remaining = taxable, tax = 0, lower = 0;
+  for(const b of RATES.bands){
+    const bandAmount = Math.max(0, Math.min(remaining, b.upTo - lower));
+    tax += bandAmount * b.rate;
+    remaining -= bandAmount;
+    lower = b.upTo;
+    if(remaining <= 0) break;
+  }
+  return tax;
+}
+
+function calcEmployee(e){
+  const basic = Number(e.basic)||0;
+  const allowances = Number(e.allowances)||0;
+  const gross = basic + allowances;
+
+  const tier1 = Math.min(basic, RATES.nssfLEL) * RATES.nssfRate;
+  const tier2 = Math.max(0, Math.min(basic, RATES.nssfUEL) - RATES.nssfLEL) * RATES.nssfRate;
+  const nssfEmployee = tier1 + tier2;
+  const nssfEmployer = nssfEmployee;
+
+  const shif = Math.max(gross * RATES.shifRate, RATES.shifMin);
+  const ahlEmployee = gross * RATES.ahlRate;
+  const ahlEmployer = gross * RATES.ahlRate;
+
+  const voluntaryPension = Math.min(Number(e.pension)||0, Math.max(0, RATES.pensionReliefCap - nssfEmployee));
+
+  const taxable = Math.max(0, gross - nssfEmployee - shif - ahlEmployee - voluntaryPension);
+  const grossTax = calcPAYE(taxable);
+  const insuranceRelief = Math.min((Number(e.insurance)||0) * RATES.insuranceReliefRate, RATES.insuranceReliefCap);
+  const paye = Math.max(0, grossTax - RATES.personalRelief - insuranceRelief);
+
+  const otherDeduct = Number(e.otherDeduct)||0;
+  const totalDeductions = nssfEmployee + shif + ahlEmployee + voluntaryPension + paye + otherDeduct;
+  const net = gross - totalDeductions;
+
+  const employerCost = gross + nssfEmployer + ahlEmployer + RATES.nitaLevy;
+
+  return { gross, nssfEmployee, nssfEmployer, shif, ahlEmployee, ahlEmployer,
+           voluntaryPension, taxable, grossTax, insuranceRelief, paye,
+           otherDeduct, totalDeductions, net, employerCost };
+}
+
+/* ---------------- Auth ---------------- */
+function showAuthError(msg){ document.getElementById('authError').textContent = msg || ''; }
+function toggleAuthMode(){
+  authMode = authMode === 'signin' ? 'signup' : 'signin';
+  document.getElementById('authTitle').textContent = authMode === 'signin' ? 'Sign in' : 'Create account';
+  document.getElementById('authSubmit').textContent = authMode === 'signin' ? 'Sign in' : 'Create account';
+  document.getElementById('authToggle').innerHTML = authMode === 'signin'
+    ? `No account yet? <a onclick="toggleAuthMode()">Create one</a>`
+    : `Already have an account? <a onclick="toggleAuthMode()">Sign in</a>`;
+  showAuthError('');
+}
+async function handleAuthSubmit(){
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  showAuthError('');
+  if(!email || !password){ showAuthError('Enter an email and password.'); return; }
+  const fn = authMode === 'signin' ? sb.auth.signInWithPassword : sb.auth.signUp;
+  const { error } = await fn.call(sb.auth, { email, password });
+  if(error){ showAuthError(error.message); return; }
+  if(authMode === 'signup'){
+    showAuthError('Account created. Check your email if confirmation is required, then sign in.');
+    return;
+  }
+  await boot();
+}
+async function handleSignOut(){
+  await sb.auth.signOut();
+  document.getElementById('appRoot').style.display = 'none';
+  document.getElementById('authScreen').style.display = 'flex';
+}
+
+/* ---------------- Data layer (Supabase) ---------------- */
+async function fetchAllData(){
+  const { data: companies, error } = await sb.from('companies').select('*').order('created_at');
+  if(error){ alert('Could not load clients: ' + error.message); return; }
+  state.clients = {};
+  for(const c of companies){
+    const { data: employees } = await sb.from('employees').select('*').eq('company_id', c.id).order('created_at');
+    state.clients[c.id] = {
+      name: c.name, period: c.period, kraPin: c.kra_pin,
+      nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
+      employees: (employees||[]).map(e => ({
+        id: e.id, name: e.name, pin: e.pin, idNumber: e.id_number, nssfNo: e.nssf_no, shaNo: e.sha_no,
+        basic: e.basic, allowances: e.allowances, pension: e.pension, insurance: e.insurance, otherDeduct: e.other_deduct
+      }))
+    };
+  }
+  if(companies.length === 0){
+    await addClient();
+  } else {
+    state.activeClient = companies[0].id;
+  }
+}
+async function loadRates(){
+  const { data: userData } = await sb.auth.getUser();
+  const { data } = await sb.from('statutory_rates').select('rates').eq('user_id', userData.user.id).maybeSingle();
+  if(data && data.rates) RATES = Object.assign(RATES, data.rates);
+}
+async function saveRates(){
+  const { data: userData } = await sb.auth.getUser();
+  await sb.from('statutory_rates').upsert({ user_id: userData.user.id, rates: RATES });
+}
+
+async function boot(){
+  const { data: { session } } = await sb.auth.getSession();
+  if(!session){
+    document.getElementById('authScreen').style.display = 'flex';
+    document.getElementById('appRoot').style.display = 'none';
+    return;
+  }
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('appRoot').style.display = 'flex';
+  document.getElementById('userBadge').textContent = session.user.email;
+  await loadRates();
+  await fetchAllData();
+  render();
+}
+
+/* ---------------- Actions ---------------- */
+async function addClient(){
+  const { data: userData } = await sb.auth.getUser();
+  const { data, error } = await sb.from('companies').insert({ user_id: userData.user.id, name: 'Untitled Client' }).select().single();
+  if(error){ alert(error.message); return; }
+  state.clients[data.id] = { name: data.name, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'', employees: [] };
+  state.activeClient = data.id;
+  await addEmployeeRow();
+}
+async function deleteClient(id, ev){
+  ev.stopPropagation();
+  if(!confirm('Remove this client and its payroll data?')) return;
+  const { error } = await sb.from('companies').delete().eq('id', id);
+  if(error){ alert(error.message); return; }
+  delete state.clients[id];
+  const names = Object.keys(state.clients);
+  if(names.length === 0){
+    await addClient();
+  } else if(state.activeClient === id){
+    state.activeClient = names[0];
+  }
+  render();
+}
+function selectClient(id){ state.activeClient = id; render(); }
+async function updateClientField(field, value){
+  state.clients[state.activeClient][field] = value;
+  const { error } = await sb.from('companies').update({ [CLIENT_DB_FIELD[field]]: value }).eq('id', state.activeClient);
+  if(error) console.error(error);
+}
+async function addEmployeeRow(){
+  const { data, error } = await sb.from('employees').insert({ company_id: state.activeClient }).select().single();
+  if(error){ alert(error.message); return; }
+  state.clients[state.activeClient].employees.push({
+    id: data.id, name:'', pin:'', idNumber:'', nssfNo:'', shaNo:'',
+    basic:0, allowances:0, pension:0, insurance:0, otherDeduct:0
+  });
+  render();
+}
+async function deleteEmployeeRow(empId){
+  const { error } = await sb.from('employees').delete().eq('id', empId);
+  if(error){ alert(error.message); return; }
+  const c = state.clients[state.activeClient];
+  c.employees = c.employees.filter(e => e.id !== empId);
+  if(c.employees.length === 0){ await addEmployeeRow(); return; }
+  render();
+}
+async function updateEmployeeField(empId, field, value){
+  const c = state.clients[state.activeClient];
+  const emp = c.employees.find(e => e.id === empId);
+  emp[field] = TEXT_FIELDS.includes(field) ? value : (parseFloat(value) || 0);
+  render();
+  const { error } = await sb.from('employees').update({ [EMP_DB_FIELD[field]]: emp[field] }).eq('id', empId);
+  if(error) console.error(error);
+}
+function toggleSettings(){
+  state.settingsOpen = !state.settingsOpen;
+  render();
+}
+function updateRate(key, value){
+  RATES[key] = parseFloat(value) || 0;
+  saveRates();
+  render();
+}
+function openDrawer(empId){
+  const c = state.clients[state.activeClient];
+  const emp = c.employees.find(e => e.id === empId);
+  const r = calcEmployee(emp);
+  document.getElementById('drawerContent').innerHTML = `
+    <h2>${emp.name || 'Unnamed employee'}</h2>
+    <div class="role">${c.name || 'Client'} &middot; ${c.period || 'Pay period not set'}</div>
+
+    <div class="payslip-section">
+      <h3>Statutory identifiers</h3>
+      <div class="settings-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="settings-field"><label>KRA PIN</label><input value="${emp.pin||''}" onchange="updateEmployeeField('${emp.id}','pin',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>National ID</label><input value="${emp.idNumber||''}" onchange="updateEmployeeField('${emp.id}','idNumber',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>NSSF number</label><input value="${emp.nssfNo||''}" onchange="updateEmployeeField('${emp.id}','nssfNo',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>SHA number</label><input value="${emp.shaNo||''}" onchange="updateEmployeeField('${emp.id}','shaNo',this.value); openDrawer('${emp.id}')"/></div>
+      </div>
+    </div>
+
+    <div class="payslip-section">
+      <h3>Earnings</h3>
+      <div class="payslip-line"><span>Basic salary</span><span>${fmt(emp.basic)}</span></div>
+      <div class="payslip-line"><span>Allowances</span><span>${fmt(emp.allowances)}</span></div>
+      <div class="payslip-line total"><span>Gross pay</span><span>${fmt(r.gross)}</span></div>
+    </div>
+
+    <div class="payslip-section">
+      <h3>Statutory deductions</h3>
+      <div class="payslip-line"><span>NSSF (Tier I + II)</span><span>${fmt(r.nssfEmployee)}</span></div>
+      <div class="payslip-line"><span>SHIF (2.75%)</span><span>${fmt(r.shif)}</span></div>
+      <div class="payslip-line"><span>Housing Levy (1.5%)</span><span>${fmt(r.ahlEmployee)}</span></div>
+      ${r.voluntaryPension ? `<div class="payslip-line"><span>Voluntary pension</span><span>${fmt(r.voluntaryPension)}</span></div>` : ''}
+      <div class="payslip-line"><span>Taxable pay</span><span>${fmt(r.taxable)}</span></div>
+      <div class="payslip-line"><span>Tax on taxable pay</span><span>${fmt(r.grossTax)}</span></div>
+      <div class="payslip-line"><span>Less: personal relief</span><span>-${fmt(RATES.personalRelief)}</span></div>
+      ${r.insuranceRelief ? `<div class="payslip-line"><span>Less: insurance relief</span><span>-${fmt(r.insuranceRelief)}</span></div>` : ''}
+      <div class="payslip-line total"><span>PAYE</span><span>${fmt(r.paye)}</span></div>
+      ${r.otherDeduct ? `<div class="payslip-line"><span>Other deductions</span><span>${fmt(r.otherDeduct)}</span></div>` : ''}
+    </div>
+
+    <div class="payslip-section">
+      <h3>Net pay</h3>
+      <div class="payslip-line net total"><span>Take-home</span><span>KES ${fmt(r.net)}</span></div>
+    </div>
+
+    <div class="payslip-section">
+      <h3>Employer cost (not deducted from employee)</h3>
+      <div class="payslip-line"><span>NSSF employer match</span><span>${fmt(r.nssfEmployer)}</span></div>
+      <div class="payslip-line"><span>Housing Levy employer match</span><span>${fmt(r.ahlEmployer)}</span></div>
+      <div class="payslip-line"><span>NITA levy</span><span>${fmt(RATES.nitaLevy)}</span></div>
+      <div class="payslip-line total"><span>Total cost to employer</span><span>${fmt(r.employerCost)}</span></div>
+    </div>
+  `;
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawerBackdrop').classList.add('open');
+}
+function closeDrawer(){
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawerBackdrop').classList.remove('open');
+}
+
+function downloadCSV(rows, filename){
+  const csv = rows.map(row => row.map(v => `"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportKRA(){
+  const c = state.clients[state.activeClient];
+  const rows = [[
+    'Employer PIN','Employee PIN','Employee Name','National ID','Basic Pay','Allowances/Benefits',
+    'Gross Pay','NSSF (Retirement Contribution)','SHIF Contribution','Affordable Housing Levy',
+    'Voluntary Pension','Taxable Pay','Tax Charged','Personal Relief','Insurance Relief','PAYE Tax'
+  ]];
+  c.employees.forEach(e=>{
+    const r = calcEmployee(e);
+    rows.push([c.kraPin||'', e.pin||'', e.name, e.idNumber||'', e.basic, e.allowances,
+      r.gross, r.nssfEmployee, r.shif, r.ahlEmployee, r.voluntaryPension, Math.round(r.taxable),
+      Math.round(r.grossTax), RATES.personalRelief, Math.round(r.insuranceRelief), Math.round(r.paye)]);
+  });
+  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_KRA_P10_working_${c.period||''}.csv`);
+}
+
+function exportNSSF(){
+  const c = state.clients[state.activeClient];
+  const rows = [[
+    'Employer Number','NSSF Member Number','National ID','KRA PIN','Surname','Other Names','Gross Pay','Voluntary Contribution'
+  ]];
+  c.employees.forEach(e=>{
+    const parts = (e.name||'').trim().split(/\s+/);
+    const surname = parts.length > 1 ? parts[parts.length-1] : (parts[0]||'');
+    const otherNames = parts.length > 1 ? parts.slice(0,-1).join(' ') : '';
+    const r = calcEmployee(e);
+    rows.push([c.nssfEmployerNo||'', e.nssfNo||'', e.idNumber||'', e.pin||'', surname, otherNames, r.gross, 0]);
+  });
+  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_NSSF_working_${c.period||''}.csv`);
+}
+
+function exportSHA(){
+  const c = state.clients[state.activeClient];
+  const rows = [[
+    'SHA Employer Number','Employee SHA Number','National ID','KRA PIN','Employee Name','Gross Salary','SHIF Contribution (2.75%)'
+  ]];
+  c.employees.forEach(e=>{
+    const r = calcEmployee(e);
+    rows.push([c.shaEmployerNo||'', e.shaNo||'', e.idNumber||'', e.pin||'', e.name, r.gross, Math.round(r.shif)]);
+  });
+  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_working_${c.period||''}.csv`);
+}
+
+function exportCSV(){
+  const c = state.clients[state.activeClient];
+  const rows = [['Name','Basic','Allowances','Gross','NSSF','SHIF','Housing Levy','PAYE','Other Deductions','Net Pay','Employer Cost']];
+  c.employees.forEach(e=>{
+    const r = calcEmployee(e);
+    rows.push([e.name, e.basic, e.allowances, r.gross, r.nssfEmployee, r.shif, r.ahlEmployee, r.paye, r.otherDeduct, r.net, r.employerCost]);
+  });
+  downloadCSV(rows, `${(c.name||'payroll').replace(/\s+/g,'_')}_payroll.csv`);
+}
+
+/* ---------------- Render ---------------- */
+function render(){
+  renderRail();
+  renderMain();
+}
+function renderRail(){
+  const list = document.getElementById('clientList');
+  list.innerHTML = Object.entries(state.clients).map(([id,c]) => `
+    <div class="client-item ${id===state.activeClient?'active':''}" onclick="selectClient('${id}')">
+      <span>${c.name || 'Untitled Client'}</span>
+      <span class="del" onclick="deleteClient('${id}', event)">&times;</span>
+    </div>
+  `).join('');
+}
+
+function renderMain(){
+  const main = document.getElementById('mainArea');
+  const c = state.clients[state.activeClient];
+  if(!c){ main.innerHTML = `<div class="empty-state"><h2>No client selected</h2></div>`; return; }
+
+  const results = c.employees.map(e => ({ e, r: calcEmployee(e) }));
+  const totals = results.reduce((acc, {r}) => {
+    acc.gross += r.gross; acc.nssf += r.nssfEmployee; acc.shif += r.shif;
+    acc.ahl += r.ahlEmployee; acc.paye += r.paye; acc.net += r.net;
+    acc.employerCost += r.employerCost;
+    return acc;
+  }, {gross:0,nssf:0,shif:0,ahl:0,paye:0,net:0,employerCost:0});
+  const totalDeductions = totals.nssf + totals.shif + totals.ahl + totals.paye;
+
+  main.innerHTML = `
+    <div class="topbar">
+      <input class="company-name-input" value="${c.name || ''}" placeholder="Client name"
+        oninput="updateClientField('name', this.value)" />
+      <div class="period-row">
+        <input type="month" value="${c.period || ''}" onchange="updateClientField('period', this.value)" />
+      </div>
+    </div>
+
+    <div class="settings-grid" style="margin-bottom:22px;">
+      <div class="settings-field"><label>Employer KRA PIN</label><input value="${c.kraPin||''}" placeholder="P0..." onchange="updateClientField('kraPin', this.value)"/></div>
+      <div class="settings-field"><label>NSSF employer number</label><input value="${c.nssfEmployerNo||''}" onchange="updateClientField('nssfEmployerNo', this.value)"/></div>
+      <div class="settings-field"><label>SHA employer number</label><input value="${c.shaEmployerNo||''}" onchange="updateClientField('shaEmployerNo', this.value)"/></div>
+    </div>
+
+    ${state.settingsOpen ? renderSettings() : ''}
+
+    <div class="summary">
+      <div class="card"><div class="label">Total gross pay</div><div class="value">${fmt(totals.gross)}</div></div>
+      <div class="card deduct"><div class="label">Total statutory deductions</div><div class="value">${fmt(totalDeductions)}</div></div>
+      <div class="card accent"><div class="label">Total net pay</div><div class="value">${fmt(totals.net)}</div></div>
+      <div class="card"><div class="label">Total employer cost</div><div class="value">${fmt(totals.employerCost)}</div></div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:22px"></th>
+            <th>Employee</th>
+            <th>Basic</th>
+            <th>Allowances</th>
+            <th>Pension</th>
+            <th>Insurance</th>
+            <th>Other ded.</th>
+            <th>NSSF</th>
+            <th>SHIF</th>
+            <th>Housing</th>
+            <th>PAYE</th>
+            <th>Net pay</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${results.map(({e,r}) => `
+            <tr onclick="openDrawer('${e.id}')">
+              <td class="row-del" onclick="event.stopPropagation(); deleteEmployeeRow('${e.id}')">&times;</td>
+              <td class="name-cell" onclick="event.stopPropagation()">
+                <input value="${e.name}" placeholder="Name" onchange="updateEmployeeField('${e.id}','name',this.value)" />
+              </td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.basic||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','basic',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.allowances||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','allowances',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.pension||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','pension',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.insurance||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','insurance',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.otherDeduct||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','otherDeduct',this.value)" /></td>
+              <td class="num">${fmt(r.nssfEmployee)}</td>
+              <td class="num">${fmt(r.shif)}</td>
+              <td class="num">${fmt(r.ahlEmployee)}</td>
+              <td class="num">${fmt(r.paye)}</td>
+              <td class="num net">${fmt(r.net)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <button class="add-row-btn" onclick="addEmployeeRow()">+ Add employee</button>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" onclick="exportCSV()">Export payroll register (CSV)</button>
+      <button class="btn" onclick="exportKRA()">KRA P10 working file</button>
+      <button class="btn" onclick="exportNSSF()">NSSF return file</button>
+      <button class="btn" onclick="exportSHA()">SHA/SHIF return file</button>
+    </div>
+    <div class="settings-note" style="margin-top:-16px;margin-bottom:26px;max-width:640px;">
+      These three files are working templates built from documented column structures for iTax P10, NSSF's e-service upload, and the SHA employer portal. Column layouts on those portals do change, so open each downloaded template's own sample file first and confirm the header order matches before you upload live returns. Fill in KRA PIN, National ID, NSSF and SHA numbers per employee (click a row &rarr; Statutory identifiers) for a complete file.
+    </div>
+  `;
+}
+
+function renderSettings(){
+  return `
+    <div class="settings-panel">
+      <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;">Statutory rates in effect</h3>
+      <div class="settings-grid">
+        <div class="settings-field"><label>NSSF lower limit (Tier I)</label><input type="number" value="${RATES.nssfLEL}" onchange="updateRate('nssfLEL', this.value)"/></div>
+        <div class="settings-field"><label>NSSF upper limit (Tier II)</label><input type="number" value="${RATES.nssfUEL}" onchange="updateRate('nssfUEL', this.value)"/></div>
+        <div class="settings-field"><label>NSSF rate (each side)</label><input type="number" step="0.001" value="${RATES.nssfRate}" onchange="updateRate('nssfRate', this.value)"/></div>
+        <div class="settings-field"><label>SHIF rate</label><input type="number" step="0.001" value="${RATES.shifRate}" onchange="updateRate('shifRate', this.value)"/></div>
+        <div class="settings-field"><label>SHIF minimum</label><input type="number" value="${RATES.shifMin}" onchange="updateRate('shifMin', this.value)"/></div>
+        <div class="settings-field"><label>Housing Levy rate (each side)</label><input type="number" step="0.001" value="${RATES.ahlRate}" onchange="updateRate('ahlRate', this.value)"/></div>
+        <div class="settings-field"><label>Personal relief (monthly)</label><input type="number" value="${RATES.personalRelief}" onchange="updateRate('personalRelief', this.value)"/></div>
+        <div class="settings-field"><label>Insurance relief cap</label><input type="number" value="${RATES.insuranceReliefCap}" onchange="updateRate('insuranceReliefCap', this.value)"/></div>
+        <div class="settings-field"><label>NITA levy (per employee)</label><input type="number" value="${RATES.nitaLevy}" onchange="updateRate('nitaLevy', this.value)"/></div>
+      </div>
+      <div class="settings-note">
+        Rates shown reflect NSSF Tier limits effective 1 Feb 2026, SHIF at 2.75% of gross (min KES 300), Housing Levy at 1.5%/1.5%, and PAYE bands of 10/25/30/32.5/35%. Verify against the current KRA and NSSF gazette notices before each pay run, and update the fields above if a rate changes.
+      </div>
+    </div>
+  `;
+}
+
+boot();
+</script>
+</body>
+</html>
