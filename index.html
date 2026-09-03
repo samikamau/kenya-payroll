@@ -254,10 +254,22 @@ function fmt(n){
   n = Math.round(n||0);
   return n.toLocaleString('en-KE');
 }
-const TEXT_FIELDS = ['name','pin','idNumber','nssfNo','shaNo'];
+const TEXT_FIELDS = ['name','pin','idNumber','nssfNo','shaNo','payrollNumber','phone',
+                      'residentialStatus','employeeType','disability','exemptionCertNo',
+                      'benefitDescription','identityType'];
 const EMP_DB_FIELD = { name:'name', pin:'pin', idNumber:'id_number', nssfNo:'nssf_no', shaNo:'sha_no',
-                        basic:'basic', allowances:'allowances', pension:'pension', insurance:'insurance', otherDeduct:'other_deduct' };
+                        basic:'basic', allowances:'allowances', pension:'pension', insurance:'insurance', otherDeduct:'other_deduct',
+                        payrollNumber:'payroll_number', phone:'phone', residentialStatus:'residential_status',
+                        employeeType:'employee_type', disability:'disability', exemptionCertNo:'exemption_cert_no',
+                        benefitDescription:'benefit_description', benefitAmount:'benefit_amount', identityType:'identity_type' };
 const CLIENT_DB_FIELD = { name:'name', period:'period', kraPin:'kra_pin', nssfEmployerNo:'nssf_employer_no', shaEmployerNo:'sha_employer_no' };
+
+function splitName(fullName){
+  const parts = (fullName||'').trim().split(/\s+/).filter(Boolean);
+  if(parts.length === 0) return { surname:'', otherNames:'' };
+  if(parts.length === 1) return { surname: parts[0], otherNames:'' };
+  return { surname: parts[parts.length-1], otherNames: parts.slice(0,-1).join(' ') };
+}
 
 function calcPAYE(taxable){
   let remaining = taxable, tax = 0, lower = 0;
@@ -346,7 +358,10 @@ async function fetchAllData(){
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
       employees: (employees||[]).map(e => ({
         id: e.id, name: e.name, pin: e.pin, idNumber: e.id_number, nssfNo: e.nssf_no, shaNo: e.sha_no,
-        basic: e.basic, allowances: e.allowances, pension: e.pension, insurance: e.insurance, otherDeduct: e.other_deduct
+        basic: e.basic, allowances: e.allowances, pension: e.pension, insurance: e.insurance, otherDeduct: e.other_deduct,
+        payrollNumber: e.payroll_number||'', phone: e.phone||'', residentialStatus: e.residential_status||'Resident',
+        employeeType: e.employee_type||'Primary Employee', disability: e.disability||'No', exemptionCertNo: e.exemption_cert_no||'',
+        benefitDescription: e.benefit_description||'Benefit not given', benefitAmount: e.benefit_amount||0, identityType: e.identity_type||'National ID'
       }))
     };
   }
@@ -415,7 +430,9 @@ async function addEmployeeRow(){
   if(error){ alert(error.message); return; }
   state.clients[state.activeClient].employees.push({
     id: data.id, name:'', pin:'', idNumber:'', nssfNo:'', shaNo:'',
-    basic:0, allowances:0, pension:0, insurance:0, otherDeduct:0
+    basic:0, allowances:0, pension:0, insurance:0, otherDeduct:0,
+    payrollNumber:'', phone:'', residentialStatus:'Resident', employeeType:'Primary Employee',
+    disability:'No', exemptionCertNo:'', benefitDescription:'Benefit not given', benefitAmount:0, identityType:'National ID'
   });
   render();
 }
@@ -459,6 +476,42 @@ function openDrawer(empId){
         <div class="settings-field"><label>National ID</label><input value="${emp.idNumber||''}" onchange="updateEmployeeField('${emp.id}','idNumber',this.value); openDrawer('${emp.id}')"/></div>
         <div class="settings-field"><label>NSSF number</label><input value="${emp.nssfNo||''}" onchange="updateEmployeeField('${emp.id}','nssfNo',this.value); openDrawer('${emp.id}')"/></div>
         <div class="settings-field"><label>SHA number</label><input value="${emp.shaNo||''}" onchange="updateEmployeeField('${emp.id}','shaNo',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>Payroll number</label><input value="${emp.payrollNumber||''}" placeholder="e.g. HPL001" onchange="updateEmployeeField('${emp.id}','payrollNumber',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>Phone</label><input value="${emp.phone||''}" onchange="updateEmployeeField('${emp.id}','phone',this.value); openDrawer('${emp.id}')"/></div>
+      </div>
+    </div>
+
+    <div class="payslip-section">
+      <h3>Filing details</h3>
+      <div class="settings-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="settings-field"><label>Residential status</label>
+          <select onchange="updateEmployeeField('${emp.id}','residentialStatus',this.value); openDrawer('${emp.id}')" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
+            <option ${emp.residentialStatus==='Resident'?'selected':''}>Resident</option>
+            <option ${emp.residentialStatus==='Non-resident'?'selected':''}>Non-resident</option>
+          </select>
+        </div>
+        <div class="settings-field"><label>Employee type</label>
+          <select onchange="updateEmployeeField('${emp.id}','employeeType',this.value); openDrawer('${emp.id}')" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
+            <option ${emp.employeeType==='Primary Employee'?'selected':''}>Primary Employee</option>
+            <option ${emp.employeeType==='Secondary Employee'?'selected':''}>Secondary Employee</option>
+          </select>
+        </div>
+        <div class="settings-field"><label>Disability</label>
+          <select onchange="updateEmployeeField('${emp.id}','disability',this.value); openDrawer('${emp.id}')" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
+            <option ${emp.disability==='No'?'selected':''}>No</option>
+            <option ${emp.disability==='Yes'?'selected':''}>Yes</option>
+          </select>
+        </div>
+        ${emp.disability==='Yes' ? `<div class="settings-field"><label>Exemption certificate no.</label><input value="${emp.exemptionCertNo||''}" onchange="updateEmployeeField('${emp.id}','exemptionCertNo',this.value); openDrawer('${emp.id}')"/></div>` : ''}
+        <div class="settings-field"><label>ID type (SHA filing)</label>
+          <select onchange="updateEmployeeField('${emp.id}','identityType',this.value); openDrawer('${emp.id}')" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
+            <option ${emp.identityType==='National ID'?'selected':''}>National ID</option>
+            <option ${emp.identityType==='Passport'?'selected':''}>Passport</option>
+            <option ${emp.identityType==='Alien ID'?'selected':''}>Alien ID</option>
+          </select>
+        </div>
+        <div class="settings-field"><label>Non-cash benefit (KES)</label><input type="number" value="${emp.benefitAmount||''}" placeholder="0" onchange="updateEmployeeField('${emp.id}','benefitAmount',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field" style="grid-column:1 / -1;"><label>Benefit description</label><input value="${emp.benefitDescription||''}" placeholder="Benefit not given" onchange="updateEmployeeField('${emp.id}','benefitDescription',this.value); openDrawer('${emp.id}')"/></div>
       </div>
     </div>
 
@@ -516,46 +569,64 @@ function downloadCSV(rows, filename){
 }
 
 function exportKRA(){
+  // Matches the KRA iTax P10A "Simplified" employee details format — no header row,
+  // 25 fixed-position columns. Verified against a real KRA-generated sample.
   const c = state.clients[state.activeClient];
-  const rows = [[
-    'Employer PIN','Employee PIN','Employee Name','National ID','Basic Pay','Allowances/Benefits',
-    'Gross Pay','NSSF (Retirement Contribution)','SHIF Contribution','Affordable Housing Levy',
-    'Voluntary Pension','Taxable Pay','Tax Charged','Personal Relief','Insurance Relief','PAYE Tax'
-  ]];
-  c.employees.forEach(e=>{
+  const rows = c.employees.map(e=>{
     const r = calcEmployee(e);
-    rows.push([c.kraPin||'', e.pin||'', e.name, e.idNumber||'', e.basic, e.allowances,
-      r.gross, r.nssfEmployee, r.shif, r.ahlEmployee, r.voluntaryPension, Math.round(r.taxable),
-      Math.round(r.grossTax), RATES.personalRelief, Math.round(r.insuranceRelief), Math.round(r.paye)]);
+    return [
+      e.pin || '',
+      e.name || '',
+      e.residentialStatus || 'Resident',
+      e.employeeType || 'Primary Employee',
+      e.disability || 'No',
+      e.disability === 'Yes' ? (e.exemptionCertNo||'') : '',
+      e.basic || 0,
+      e.allowances || 0,
+      0,                                  // value of quarters
+      e.benefitAmount || 0,               // other non-cash benefit value
+      e.benefitDescription || 'Benefit not given',
+      '',
+      0,
+      '',
+      Math.round(r.shif * 100) / 100,
+      Math.round(r.nssfEmployee * 100) / 100,
+      0,                                  // owner occupied interest
+      0,                                  // additional retirement contribution
+      0,                                  // post retirement medical fund
+      Math.round(r.ahlEmployee * 100) / 100,
+      '',
+      RATES.personalRelief,
+      Math.round(r.insuranceRelief * 100) / 100,
+      '',
+      Math.round(r.paye * 100) / 100
+    ];
   });
-  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_KRA_P10_working_${c.period||''}.csv`);
+  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_P10A_${c.period||''}.csv`);
 }
 
 function exportNSSF(){
+  // Matches the NSSF new-format upload: PAYROLL NUMBER, SURNAME, OTHER NAMES, ID NO, KRA PIN, NSSF NO, GROSS PAY, VOLUNTARY
   const c = state.clients[state.activeClient];
-  const rows = [[
-    'Employer Number','NSSF Member Number','National ID','KRA PIN','Surname','Other Names','Gross Pay','Voluntary Contribution'
-  ]];
+  const rows = [['PAYROLL NUMBER','SURNAME','OTHER NAMES','ID NO','KRA PIN','NSSF NO','GROSS PAY','VOLUNTARY']];
   c.employees.forEach(e=>{
-    const parts = (e.name||'').trim().split(/\s+/);
-    const surname = parts.length > 1 ? parts[parts.length-1] : (parts[0]||'');
-    const otherNames = parts.length > 1 ? parts.slice(0,-1).join(' ') : '';
+    const { surname, otherNames } = splitName(e.name);
     const r = calcEmployee(e);
-    rows.push([c.nssfEmployerNo||'', e.nssfNo||'', e.idNumber||'', e.pin||'', surname, otherNames, r.gross, 0]);
+    rows.push([e.payrollNumber||'', surname, otherNames, e.idNumber||'', e.pin||'', e.nssfNo||'', Math.round(r.gross), 0]);
   });
-  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_NSSF_working_${c.period||''}.csv`);
+  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_NSSF_${c.period||''}.csv`);
 }
 
 function exportSHA(){
+  // Matches the SHA/SHIF upload: PAYROLL NUMBER, FIRSTNAME, LASTNAME, IDENTITY TYPE, ID NO, KRA PIN, NHIF NO, CONTRIBUTION AMOUNT, PHONE
   const c = state.clients[state.activeClient];
-  const rows = [[
-    'SHA Employer Number','Employee SHA Number','National ID','KRA PIN','Employee Name','Gross Salary','SHIF Contribution (2.75%)'
-  ]];
+  const rows = [['PAYROLL NUMBER','FIRSTNAME','LASTNAME','IDENTITY TYPE','ID NO','KRA PIN','NHIF NO','CONTRIBUTION AMOUNT','PHONE']];
   c.employees.forEach(e=>{
+    const { surname, otherNames } = splitName(e.name);
     const r = calcEmployee(e);
-    rows.push([c.shaEmployerNo||'', e.shaNo||'', e.idNumber||'', e.pin||'', e.name, r.gross, Math.round(r.shif)]);
+    rows.push([e.payrollNumber||'', otherNames, surname, e.identityType||'National ID', e.idNumber||'', e.pin||'', e.shaNo||'', Math.round(r.shif), e.phone||'']);
   });
-  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_working_${c.period||''}.csv`);
+  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_${c.period||''}.csv`);
 }
 
 function exportCSV(){
@@ -665,12 +736,12 @@ function renderMain(){
 
     <div class="actions">
       <button class="btn primary" onclick="exportCSV()">Export payroll register (CSV)</button>
-      <button class="btn" onclick="exportKRA()">KRA P10 working file</button>
+      <button class="btn" onclick="exportKRA()">KRA P10A file</button>
       <button class="btn" onclick="exportNSSF()">NSSF return file</button>
       <button class="btn" onclick="exportSHA()">SHA/SHIF return file</button>
     </div>
     <div class="settings-note" style="margin-top:-16px;margin-bottom:26px;max-width:640px;">
-      These three files are working templates built from documented column structures for iTax P10, NSSF's e-service upload, and the SHA employer portal. Column layouts on those portals do change, so open each downloaded template's own sample file first and confirm the header order matches before you upload live returns. Fill in KRA PIN, National ID, NSSF and SHA numbers per employee (click a row &rarr; Statutory identifiers) for a complete file.
+      These three exports match real KRA P10A, NSSF, and SHA sample templates column-for-column. Fill in KRA PIN, National ID, NSSF/SHA numbers, and payroll number per employee (click a row &rarr; Statutory identifiers) for a complete file. If any authority changes its template layout, bring me the new sample and I'll update the export to match.
     </div>
   `;
 }
