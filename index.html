@@ -295,6 +295,17 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth:
 let state = { clients: {}, activeClient: null, settingsOpen: false };
 let authMode = 'signin'; // or 'signup'
 
+function esc(str){
+  // Escapes text before it's interpolated into HTML attributes or content — prevents a
+  // client/employee name containing a stray quote or angle bracket from breaking out of
+  // an attribute and injecting arbitrary HTML/JS (stored XSS).
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 function fmt(n){
   n = Math.round(n||0);
   if(n === 0) return '-';
@@ -403,6 +414,7 @@ async function handleAuthSubmit(){
   rememberMeChoice = document.getElementById('authRememberMe').checked;
   showAuthError('');
   if(!email || !password){ showAuthError('Enter an email and password.'); return; }
+  if(authMode === 'signup' && password.length < 8){ showAuthError('Password must be at least 8 characters.'); return; }
   const fn = authMode === 'signin' ? sb.auth.signInWithPassword : sb.auth.signUp;
   const { error } = await fn.call(sb.auth, { email, password });
   if(error){ showAuthError(error.message); return; }
@@ -879,19 +891,19 @@ function openDrawer(empId){
   const emp = c.employees.find(e => e.id === empId);
   const r = calcEmployee(emp);
   document.getElementById('drawerContent').innerHTML = `
-    <h2>${emp.name || 'Unnamed employee'}</h2>
-    <div class="role">${c.name || 'Client'} &middot; ${c.period || 'Pay period not set'}</div>
+    <h2>${esc(emp.name) || 'Unnamed employee'}</h2>
+    <div class="role">${esc(c.name) || 'Client'} &middot; ${esc(c.period) || 'Pay period not set'}</div>
 
     <div class="payslip-section">
       <h3>Statutory identifiers</h3>
       <div class="settings-grid" style="grid-template-columns:1fr 1fr;">
-        <div class="settings-field"><label>KRA PIN</label><input value="${emp.pin||''}" onchange="updateEmployeeField('${emp.id}','pin',this.value); openDrawer('${emp.id}')"/></div>
-        <div class="settings-field"><label>National ID</label><input value="${emp.idNumber||''}" onchange="updateEmployeeField('${emp.id}','idNumber',this.value); openDrawer('${emp.id}')"/></div>
-        <div class="settings-field"><label>NSSF number</label><input value="${emp.nssfNo||''}" onchange="updateEmployeeField('${emp.id}','nssfNo',this.value); openDrawer('${emp.id}')"/></div>
-        <div class="settings-field"><label>SHA number</label><input value="${emp.shaNo||''}" onchange="updateEmployeeField('${emp.id}','shaNo',this.value); openDrawer('${emp.id}')"/></div>
-        <div class="settings-field"><label>Payroll number</label><input value="${emp.payrollNumber||''}" placeholder="e.g. HPL001" onchange="updateEmployeeField('${emp.id}','payrollNumber',this.value); openDrawer('${emp.id}')"/></div>
-        <div class="settings-field"><label>Phone</label><input value="${emp.phone||''}" onchange="updateEmployeeField('${emp.id}','phone',this.value); openDrawer('${emp.id}')"/></div>
-        <div class="settings-field" style="grid-column:1 / -1;"><label>Email (for payslip delivery)</label><input type="email" value="${emp.email||''}" placeholder="employee@example.com" onchange="updateEmployeeField('${emp.id}','email',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>KRA PIN</label><input value="${esc(emp.pin)}" onchange="updateEmployeeField('${emp.id}','pin',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>National ID</label><input value="${esc(emp.idNumber)}" onchange="updateEmployeeField('${emp.id}','idNumber',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>NSSF number</label><input value="${esc(emp.nssfNo)}" onchange="updateEmployeeField('${emp.id}','nssfNo',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>SHA number</label><input value="${esc(emp.shaNo)}" onchange="updateEmployeeField('${emp.id}','shaNo',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>Payroll number</label><input value="${esc(emp.payrollNumber)}" placeholder="e.g. HPL001" onchange="updateEmployeeField('${emp.id}','payrollNumber',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>Phone</label><input value="${esc(emp.phone)}" onchange="updateEmployeeField('${emp.id}','phone',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field" style="grid-column:1 / -1;"><label>Email (for payslip delivery)</label><input type="email" value="${esc(emp.email)}" placeholder="employee@example.com" onchange="updateEmployeeField('${emp.id}','email',this.value); openDrawer('${emp.id}')"/></div>
       </div>
     </div>
 
@@ -916,7 +928,7 @@ function openDrawer(empId){
             <option ${emp.disability==='Yes'?'selected':''}>Yes</option>
           </select>
         </div>
-        ${emp.disability==='Yes' ? `<div class="settings-field"><label>Exemption certificate no.</label><input value="${emp.exemptionCertNo||''}" onchange="updateEmployeeField('${emp.id}','exemptionCertNo',this.value); openDrawer('${emp.id}')"/></div>` : ''}
+        ${emp.disability==='Yes' ? `<div class="settings-field"><label>Exemption certificate no.</label><input value="${esc(emp.exemptionCertNo)}" onchange="updateEmployeeField('${emp.id}','exemptionCertNo',this.value); openDrawer('${emp.id}')"/></div>` : ''}
         <div class="settings-field"><label>ID type (SHA filing)</label>
           <select onchange="updateEmployeeField('${emp.id}','identityType',this.value); openDrawer('${emp.id}')" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
             <option ${emp.identityType==='National ID'?'selected':''}>National ID</option>
@@ -925,7 +937,7 @@ function openDrawer(empId){
           </select>
         </div>
         <div class="settings-field"><label>Non-cash benefit (KES)</label><input type="number" value="${emp.benefitAmount||''}" placeholder="0" onchange="updateEmployeeField('${emp.id}','benefitAmount',this.value); openDrawer('${emp.id}')"/></div>
-        <div class="settings-field" style="grid-column:1 / -1;"><label>Benefit description</label><input value="${emp.benefitDescription||''}" placeholder="Benefit not given" onchange="updateEmployeeField('${emp.id}','benefitDescription',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field" style="grid-column:1 / -1;"><label>Benefit description</label><input value="${esc(emp.benefitDescription)}" placeholder="Benefit not given" onchange="updateEmployeeField('${emp.id}','benefitDescription',this.value); openDrawer('${emp.id}')"/></div>
       </div>
     </div>
 
@@ -958,7 +970,7 @@ function openDrawer(empId){
             ${DEDUCTION_TYPES.map(t => `<option ${d.type===t?'selected':''}>${t}</option>`).join('')}
           </select>
           <input type="number" value="${d.amount||''}" placeholder="0" oninput="updateDeductionItem('${emp.id}', ${idx}, 'amount', this.value)" style="width:80px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;"/>
-          <input value="${d.description||''}" placeholder="Note (optional)" onchange="updateDeductionItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.4;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
+          <input value="${esc(d.description)}" placeholder="Note (optional)" onchange="updateDeductionItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.4;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
           <span class="row-del" style="opacity:.6;" onclick="removeDeductionItem('${emp.id}', ${idx})">&times;</span>
         </div>
       `).join('')}
@@ -1316,7 +1328,7 @@ function renderRail(){
   const entries = Object.entries(state.clients);
   list.innerHTML = `
     <select onchange="selectClient(this.value)" style="width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:9px 10px;font-family:'Inter',sans-serif;font-size:13.5px;margin-bottom:8px;">
-      ${entries.map(([id,c]) => `<option value="${id}" ${id===state.activeClient?'selected':''}>${c.name || 'Untitled Client'}</option>`).join('')}
+      ${entries.map(([id,c]) => `<option value="${id}" ${id===state.activeClient?'selected':''}>${esc(c.name) || 'Untitled Client'}</option>`).join('')}
     </select>
     ${entries.length > 0 ? `<button class="rail-btn" style="color:#C77B6E;" onclick="deleteClient(state.activeClient, event)">Delete this client</button>` : ''}
   `;
@@ -1338,7 +1350,7 @@ function renderMain(){
 
   main.innerHTML = `
     <div class="topbar">
-      <input class="company-name-input" value="${c.name || ''}" placeholder="Client name"
+      <input class="company-name-input" value="${esc(c.name)}" placeholder="Client name"
         oninput="updateClientField('name', this.value)" />
       <div class="period-row">
         <input type="month" value="${c.period || ''}" onchange="updateClientField('period', this.value)" />
@@ -1358,9 +1370,9 @@ function renderMain(){
     </div>
 
     <div class="settings-grid" style="margin-bottom:22px;">
-      <div class="settings-field"><label>Employer KRA PIN</label><input value="${c.kraPin||''}" placeholder="P0..." onchange="updateClientField('kraPin', this.value)"/></div>
-      <div class="settings-field"><label>NSSF employer number</label><input value="${c.nssfEmployerNo||''}" onchange="updateClientField('nssfEmployerNo', this.value)"/></div>
-      <div class="settings-field"><label>SHA employer number</label><input value="${c.shaEmployerNo||''}" onchange="updateClientField('shaEmployerNo', this.value)"/></div>
+      <div class="settings-field"><label>Employer KRA PIN</label><input value="${esc(c.kraPin)}" placeholder="P0..." onchange="updateClientField('kraPin', this.value)"/></div>
+      <div class="settings-field"><label>NSSF employer number</label><input value="${esc(c.nssfEmployerNo)}" onchange="updateClientField('nssfEmployerNo', this.value)"/></div>
+      <div class="settings-field"><label>SHA employer number</label><input value="${esc(c.shaEmployerNo)}" onchange="updateClientField('shaEmployerNo', this.value)"/></div>
       <div class="settings-field"><label>Brand color (on payslip PDFs)</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="color" value="${c.brandColor||'#B08D57'}" style="width:40px;height:32px;padding:2px;background:var(--bg);border:1px solid var(--line);border-radius:4px;" onchange="updateClientField('brandColor', this.value); render()"/>
@@ -1418,7 +1430,7 @@ function renderMain(){
             <tr onclick="openDrawer('${e.id}')">
               <td class="row-del" onclick="event.stopPropagation(); deleteEmployeeRow('${e.id}')">&times;</td>
               <td class="name-cell" onclick="event.stopPropagation()">
-                <input value="${e.name}" placeholder="Name" onchange="updateEmployeeField('${e.id}','name',this.value)" />
+                <input value="${esc(e.name)}" placeholder="Name" onchange="updateEmployeeField('${e.id}','name',this.value)" />
               </td>
               <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.basic||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','basic',this.value)" /></td>
               <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.allowances||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','allowances',this.value)" /></td>
