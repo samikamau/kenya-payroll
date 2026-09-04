@@ -466,9 +466,47 @@ async function addClient(){
   state.activeClient = data.id;
   await addEmployeeRow();
 }
+let _pendingDeleteCode = null;
+let _pendingDeleteExpiry = 0;
+
 async function deleteClient(id, ev){
-  ev.stopPropagation();
-  if(!confirm('Remove this client and its payroll data?')) return;
+  if(ev) ev.stopPropagation();
+  const client = state.clients[id];
+  if(!client) return;
+
+  const clientName = client.name || 'this client';
+  if(!confirm(`Delete "${clientName}" and all its payroll data? This cannot be undone.`)) return;
+
+  const { data: userData } = await sb.auth.getUser();
+  const email = userData?.user?.email;
+  if(!email){ alert('Could not confirm your account email. Please sign in again and retry.'); return; }
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  _pendingDeleteCode = code;
+  _pendingDeleteExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+  try{
+    const { error } = await sb.functions.invoke('send-verification-code', {
+      body: { to: email, code, purpose: `deleting the client "${clientName}"` }
+    });
+    if(error) throw error;
+  } catch(err){
+    alert('Could not send a verification code: ' + (err.message || 'the verification email function may not be set up yet.'));
+    return;
+  }
+
+  const entered = prompt(`For your security, a 6-digit verification code was just sent to ${email}.\n\nEnter it below to permanently delete "${clientName}":`);
+  if(entered === null) return; // user cancelled — nothing deleted
+  if(Date.now() > _pendingDeleteExpiry){
+    alert('That code has expired. Click delete again to get a new one.');
+    return;
+  }
+  if(entered.trim() !== _pendingDeleteCode){
+    alert('Incorrect code. The client was not deleted.');
+    return;
+  }
+  _pendingDeleteCode = null;
+
   const { error } = await sb.from('companies').delete().eq('id', id);
   if(error){ alert(error.message); return; }
   delete state.clients[id];
