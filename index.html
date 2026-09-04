@@ -260,17 +260,23 @@ const TEXT_FIELDS = ['name','pin','idNumber','nssfNo','shaNo','payrollNumber','p
                       'residentialStatus','employeeType','disability','exemptionCertNo',
                       'benefitDescription','identityType'];
 const EMP_DB_FIELD = { name:'name', pin:'pin', idNumber:'id_number', nssfNo:'nssf_no', shaNo:'sha_no',
-                        basic:'basic', allowances:'allowances', pension:'pension', insurance:'insurance', otherDeduct:'other_deduct',
+                        basic:'basic', allowances:'allowances', pension:'pension', insurance:'insurance', deductionItems:'deduction_items',
                         payrollNumber:'payroll_number', phone:'phone', email:'email', residentialStatus:'residential_status',
                         employeeType:'employee_type', disability:'disability', exemptionCertNo:'exemption_cert_no',
                         benefitDescription:'benefit_description', benefitAmount:'benefit_amount', identityType:'identity_type' };
 const CLIENT_DB_FIELD = { name:'name', period:'period', kraPin:'kra_pin', nssfEmployerNo:'nssf_employer_no', shaEmployerNo:'sha_employer_no',
-                           brandColor:'brand_color', logoDataUrl:'logo_data_url' };
+                           brandColor:'brand_color', logoDataUrl:'logo_data_url', logoSize:'logo_size', logoAspect:'logo_aspect' };
 
 function hexToRgb(hex){
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((hex||'').trim());
   if(!m) return [176,141,87]; // fallback gold
   return [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)];
+}
+
+const DEDUCTION_TYPES = ['Salary Advance','Loan Repayment','Damaged Asset/Equipment','Union Dues','Other'];
+
+function sumDeductions(items){
+  return (items||[]).reduce((s,d) => s + (parseFloat(d.amount)||0), 0);
 }
 
 function splitName(fullName){
@@ -313,7 +319,7 @@ function calcEmployee(e){
   const insuranceRelief = Math.min((Number(e.insurance)||0) * RATES.insuranceReliefRate, RATES.insuranceReliefCap);
   const paye = Math.max(0, grossTax - RATES.personalRelief - insuranceRelief);
 
-  const otherDeduct = Number(e.otherDeduct)||0;
+  const otherDeduct = sumDeductions(e.deductionItems);
   const totalDeductions = nssfEmployee + shif + ahlEmployee + voluntaryPension + paye + otherDeduct;
   const net = gross - totalDeductions;
 
@@ -366,9 +372,10 @@ async function fetchAllData(){
       name: c.name, period: c.period, kraPin: c.kra_pin,
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
       brandColor: c.brand_color || '#B08D57', logoDataUrl: c.logo_data_url || '',
+      logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
       employees: (employees||[]).map(e => ({
         id: e.id, name: e.name, pin: e.pin, idNumber: e.id_number, nssfNo: e.nssf_no, shaNo: e.sha_no,
-        basic: e.basic, allowances: e.allowances, pension: e.pension, insurance: e.insurance, otherDeduct: e.other_deduct,
+        basic: e.basic, allowances: e.allowances, pension: e.pension, insurance: e.insurance, deductionItems: e.deduction_items || [],
         payrollNumber: e.payroll_number||'', phone: e.phone||'', email: e.email||'', residentialStatus: e.residential_status||'Resident',
         employeeType: e.employee_type||'Primary Employee', disability: e.disability||'No', exemptionCertNo: e.exemption_cert_no||'',
         benefitDescription: e.benefit_description||'Benefit not given', benefitAmount: e.benefit_amount||0, identityType: e.identity_type||'National ID'
@@ -420,7 +427,9 @@ async function handleLogoUpload(event){
   });
 
   // Resize down to a sane max width so we're not storing multi-MB phone photos in the database.
-  const resized = await new Promise((resolve) => {
+  // Aspect ratio is captured here and stored separately, so the PDF render never distorts the logo
+  // regardless of what size the user picks later.
+  const { resized, aspect } = await new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       const maxW = 320;
@@ -430,12 +439,14 @@ async function handleLogoUpload(event){
       canvas.height = img.height * scale;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/png'));
+      resolve({ resized: canvas.toDataURL('image/png'), aspect: img.height / img.width });
     };
     img.src = dataUrl;
   });
 
-  await updateClientField('logoDataUrl', resized);
+  const c = state.clients[state.activeClient];
+  c.logoDataUrl = resized; c.logoAspect = aspect;
+  await sb.from('companies').update({ logo_data_url: resized, logo_aspect: aspect }).eq('id', state.activeClient);
   render();
 }
 
@@ -449,7 +460,7 @@ async function addClient(){
   const { data, error } = await sb.from('companies').insert({ user_id: userData.user.id, name: 'Untitled Client' }).select().single();
   if(error){ alert(error.message); return; }
   state.clients[data.id] = { name: data.name, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'',
-                              brandColor:'#B08D57', logoDataUrl:'', employees: [] };
+                              brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75, employees: [] };
   state.activeClient = data.id;
   await addEmployeeRow();
 }
@@ -478,7 +489,7 @@ async function addEmployeeRow(){
   if(error){ alert(error.message); return; }
   state.clients[state.activeClient].employees.push({
     id: data.id, name:'', pin:'', idNumber:'', nssfNo:'', shaNo:'',
-    basic:0, allowances:0, pension:0, insurance:0, otherDeduct:0,
+    basic:0, allowances:0, pension:0, insurance:0, deductionItems:[],
     payrollNumber:'', phone:'', email:'', residentialStatus:'Resident', employeeType:'Primary Employee',
     disability:'No', exemptionCertNo:'', benefitDescription:'Benefit not given', benefitAmount:0, identityType:'National ID'
   });
@@ -500,6 +511,36 @@ async function updateEmployeeField(empId, field, value){
   const { error } = await sb.from('employees').update({ [EMP_DB_FIELD[field]]: emp[field] }).eq('id', empId);
   if(error) console.error(error);
 }
+
+async function saveDeductionItems(empId, items){
+  const { error } = await sb.from('employees').update({ deduction_items: items }).eq('id', empId);
+  if(error) console.error(error);
+}
+function addDeductionItem(empId){
+  const c = state.clients[state.activeClient];
+  const emp = c.employees.find(e => e.id === empId);
+  if(!emp.deductionItems) emp.deductionItems = [];
+  emp.deductionItems.push({ type: DEDUCTION_TYPES[0], description:'', amount: 0 });
+  saveDeductionItems(empId, emp.deductionItems);
+  openDrawer(empId);
+}
+function updateDeductionItem(empId, idx, field, value){
+  const c = state.clients[state.activeClient];
+  const emp = c.employees.find(e => e.id === empId);
+  emp.deductionItems[idx][field] = field === 'amount' ? (parseFloat(value)||0) : value;
+  saveDeductionItems(empId, emp.deductionItems);
+  render();
+  openDrawer(empId);
+}
+function removeDeductionItem(empId, idx){
+  const c = state.clients[state.activeClient];
+  const emp = c.employees.find(e => e.id === empId);
+  emp.deductionItems.splice(idx, 1);
+  saveDeductionItems(empId, emp.deductionItems);
+  render();
+  openDrawer(empId);
+}
+
 function generatePayslipPDF(empId){
   const c = state.clients[state.activeClient];
   const emp = c.employees.find(e => e.id === empId);
@@ -511,10 +552,12 @@ function generatePayslipPDF(empId){
 
   if(c.logoDataUrl){
     try{
-      doc.addImage(c.logoDataUrl, 'PNG', left, y - 34, 60, 60 * 0.75);
+      const logoW = c.logoSize || 60;
+      const logoH = logoW * (c.logoAspect || 0.75);
+      doc.addImage(c.logoDataUrl, 'PNG', left, y - 34, logoW, logoH);
     }catch(e){ /* ignore malformed image, don't block payslip generation */ }
   }
-  const textLeft = c.logoDataUrl ? left + 76 : left;
+  const textLeft = c.logoDataUrl ? left + (c.logoSize || 60) + 16 : left;
 
   const line = (label, value, opts={}) => {
     doc.setFont('helvetica', opts.bold ? 'bold' : 'normal');
@@ -555,7 +598,9 @@ function generatePayslipPDF(empId){
   if(r.voluntaryPension) line('Voluntary pension', fmt(r.voluntaryPension));
   line('Taxable pay', fmt(r.taxable));
   line('PAYE', fmt(r.paye), { bold:true });
-  if(emp.otherDeduct) line('Other deductions', fmt(emp.otherDeduct));
+  (emp.deductionItems||[]).forEach(d => {
+    if(d.amount) line(d.description ? `${d.type}: ${d.description}` : d.type, fmt(d.amount));
+  });
 
   section('Net pay');
   doc.setFont('helvetica','bold'); doc.setFontSize(14);
@@ -691,7 +736,23 @@ function openDrawer(empId){
       <div class="payslip-line"><span>Less: personal relief</span><span>-${fmt(RATES.personalRelief)}</span></div>
       ${r.insuranceRelief ? `<div class="payslip-line"><span>Less: insurance relief</span><span>-${fmt(r.insuranceRelief)}</span></div>` : ''}
       <div class="payslip-line total"><span>PAYE</span><span>${fmt(r.paye)}</span></div>
-      ${r.otherDeduct ? `<div class="payslip-line"><span>Other deductions</span><span>${fmt(r.otherDeduct)}</span></div>` : ''}
+    </div>
+
+    <div class="payslip-section">
+      <h3>Other deductions</h3>
+      ${(emp.deductionItems||[]).length === 0 ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">None on file for this pay period.</div>` : ''}
+      ${(emp.deductionItems||[]).map((d, idx) => `
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+          <select onchange="updateDeductionItem('${emp.id}', ${idx}, 'type', this.value)" style="flex:1.2;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 6px;font-size:12px;">
+            ${DEDUCTION_TYPES.map(t => `<option ${d.type===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+          <input value="${d.description||''}" placeholder="Note (optional)" onchange="updateDeductionItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.4;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
+          <input type="number" value="${d.amount||''}" placeholder="0" onchange="updateDeductionItem('${emp.id}', ${idx}, 'amount', this.value)" style="width:80px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;"/>
+          <span class="row-del" style="opacity:.6;" onclick="removeDeductionItem('${emp.id}', ${idx})">&times;</span>
+        </div>
+      `).join('')}
+      <button class="add-row-btn" style="padding:6px 2px;" onclick="addDeductionItem('${emp.id}')">+ Add deduction</button>
+      ${r.otherDeduct ? `<div class="payslip-line total" style="margin-top:8px;"><span>Total other deductions</span><span>${fmt(r.otherDeduct)}</span></div>` : ''}
     </div>
 
     <div class="payslip-section">
@@ -862,6 +923,10 @@ async function handleCSVImport(event){
       const raw = (cells[i]||'').trim();
       emp[field] = IMPORT_NUMERIC_FIELDS.includes(field) ? (parseFloat(raw) || 0) : raw;
     });
+    // The single "Other Deductions" import column becomes one "Other" line item,
+    // since deductions are now tracked as a categorized list per employee.
+    emp.deductionItems = emp.otherDeduct ? [{ type:'Other', description:'Imported', amount: emp.otherDeduct }] : [];
+    delete emp.otherDeduct;
     return emp;
   }).filter(e => e.name); // skip rows with no name
 
@@ -875,7 +940,7 @@ async function handleCSVImport(event){
   const dbRows = newEmployees.map(e => ({
     company_id: companyId, name: e.name, pin: e.pin, id_number: e.idNumber, nssf_no: e.nssfNo, sha_no: e.shaNo,
     payroll_number: e.payrollNumber, phone: e.phone, email: e.email, basic: e.basic, allowances: e.allowances,
-    pension: e.pension, insurance: e.insurance, other_deduct: e.otherDeduct,
+    pension: e.pension, insurance: e.insurance, deduction_items: e.deductionItems,
     residential_status: e.residentialStatus, employee_type: e.employeeType, disability: e.disability,
     exemption_cert_no: e.exemptionCertNo, identity_type: e.identityType,
     benefit_description: e.benefitDescription, benefit_amount: e.benefitAmount
@@ -907,10 +972,10 @@ function exportCSV(){
     rows.push([e.name, e.basic, e.allowances, Math.round(r.gross),
       Math.round(r.nssfEmployee), Math.round(r.nssfEmployer),
       Math.round(r.shif), Math.round(r.ahlEmployee), Math.round(r.ahlEmployer), RATES.nitaLevy,
-      Math.round(r.paye), e.otherDeduct, Math.round(r.net), Math.round(r.employerCost)]);
+      Math.round(r.paye), Math.round(r.otherDeduct), Math.round(r.net), Math.round(r.employerCost)]);
     t.gross+=r.gross; t.nssfE+=r.nssfEmployee; t.nssfEr+=r.nssfEmployer; t.shif+=r.shif;
     t.ahlE+=r.ahlEmployee; t.ahlEr+=r.ahlEmployer; t.nita+=RATES.nitaLevy; t.paye+=r.paye;
-    t.otherD+=(e.otherDeduct||0); t.net+=r.net; t.employerCost+=r.employerCost;
+    t.otherD+=r.otherDeduct; t.net+=r.net; t.employerCost+=r.employerCost;
   });
   rows.push(['TOTAL', '', '', Math.round(t.gross), Math.round(t.nssfE), Math.round(t.nssfEr),
     Math.round(t.shif), Math.round(t.ahlE), Math.round(t.ahlEr), Math.round(t.nita),
@@ -926,9 +991,11 @@ function exportPayrollRegisterPDF(){
   const left = 40; let y = 50;
 
   if(c.logoDataUrl){
-    try{ doc.addImage(c.logoDataUrl, 'PNG', left, y - 30, 54, 54 * 0.75); }catch(e){}
+    const logoW = Math.min(c.logoSize || 60, 90); // cap slightly smaller here so it doesn't crowd a landscape header
+    const logoH = logoW * (c.logoAspect || 0.75);
+    try{ doc.addImage(c.logoDataUrl, 'PNG', left, y - 30, logoW, logoH); }catch(e){}
   }
-  const textLeft = c.logoDataUrl ? left + 68 : left;
+  const textLeft = c.logoDataUrl ? left + Math.min(c.logoSize || 60, 90) + 14 : left;
   doc.setFont('helvetica','bold'); doc.setFontSize(17);
   doc.setTextColor(br,bg,bb);
   doc.text(c.name || 'Payroll Register', textLeft, y);
@@ -947,12 +1014,12 @@ function exportPayrollRegisterPDF(){
     const r = calcEmployee(e);
     body.push([
       e.name||'-', fmt(e.basic), fmt(e.allowances), fmt(r.gross), fmt(r.nssfEmployee), fmt(r.nssfEmployer),
-      fmt(r.shif), fmt(r.ahlEmployee), fmt(r.ahlEmployer), fmt(RATES.nitaLevy), fmt(r.paye), fmt(e.otherDeduct), fmt(r.net), fmt(r.employerCost)
+      fmt(r.shif), fmt(r.ahlEmployee), fmt(r.ahlEmployer), fmt(RATES.nitaLevy), fmt(r.paye), fmt(r.otherDeduct), fmt(r.net), fmt(r.employerCost)
     ]);
     totals.basic+=e.basic||0; totals.allowances+=e.allowances||0; totals.gross+=r.gross;
     totals.nssfE+=r.nssfEmployee; totals.nssfEr+=r.nssfEmployer; totals.shif+=r.shif;
     totals.ahlE+=r.ahlEmployee; totals.ahlEr+=r.ahlEmployer; totals.nita+=RATES.nitaLevy;
-    totals.paye+=r.paye; totals.otherD+=(e.otherDeduct||0); totals.net+=r.net; totals.cost+=r.employerCost;
+    totals.paye+=r.paye; totals.otherD+=r.otherDeduct; totals.net+=r.net; totals.cost+=r.employerCost;
   });
   const footRow = [[
     'TOTAL', fmt(totals.basic), fmt(totals.allowances), fmt(totals.gross), fmt(totals.nssfE), fmt(totals.nssfEr),
@@ -1073,6 +1140,14 @@ function renderMain(){
           <input type="file" id="logoFileInput" accept="image/*" style="display:none;" onchange="handleLogoUpload(event)" />
         </div>
       </div>
+      ${c.logoDataUrl ? `
+      <div class="settings-field">
+        <label>Logo size on PDFs (${Math.round(c.logoSize||60)}pt wide)</label>
+        <input type="range" min="24" max="140" step="2" value="${c.logoSize||60}"
+          oninput="this.previousElementSibling.textContent = 'Logo size on PDFs (' + this.value + 'pt wide)'"
+          onchange="updateClientField('logoSize', parseFloat(this.value)); render()"
+          style="width:100%;accent-color:var(--gold);" />
+      </div>` : ''}
     </div>
 
     ${state.settingsOpen ? renderSettings() : ''}
@@ -1113,7 +1188,7 @@ function renderMain(){
               <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.allowances||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','allowances',this.value)" /></td>
               <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.pension||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','pension',this.value)" /></td>
               <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.insurance||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','insurance',this.value)" /></td>
-              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.otherDeduct||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','otherDeduct',this.value)" /></td>
+              <td class="num" style="color:var(--muted);" title="Manage in the deductions panel — click the row">${fmt(r.otherDeduct)}</td>
               <td class="num">${fmt(r.nssfEmployee)}</td>
               <td class="num">${fmt(r.shif)}</td>
               <td class="num">${fmt(r.ahlEmployee)}</td>
