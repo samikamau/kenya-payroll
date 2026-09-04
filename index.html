@@ -174,6 +174,7 @@
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
 
@@ -894,12 +895,125 @@ async function handleCSVImport(event){
 
 function exportCSV(){
   const c = state.clients[state.activeClient];
-  const rows = [['Name','Basic','Allowances','Gross','NSSF','SHIF','Housing Levy','PAYE','Other Deductions','Net Pay','Employer Cost']];
+  const rows = [[
+    'Name','Basic','Allowances','Gross',
+    'NSSF (Employee)','NSSF (Employer)',
+    'SHIF','Housing Levy (Employee)','Housing Levy (Employer)','NITA Levy (Employer)',
+    'PAYE','Other Deductions','Net Pay','Total Employer Cost'
+  ]];
+  let t = { nssfE:0, nssfEr:0, shif:0, ahlE:0, ahlEr:0, nita:0, paye:0, otherD:0, net:0, employerCost:0, gross:0 };
   c.employees.forEach(e=>{
     const r = calcEmployee(e);
-    rows.push([e.name, e.basic, e.allowances, r.gross, r.nssfEmployee, r.shif, r.ahlEmployee, r.paye, r.otherDeduct, r.net, r.employerCost]);
+    rows.push([e.name, e.basic, e.allowances, Math.round(r.gross),
+      Math.round(r.nssfEmployee), Math.round(r.nssfEmployer),
+      Math.round(r.shif), Math.round(r.ahlEmployee), Math.round(r.ahlEmployer), RATES.nitaLevy,
+      Math.round(r.paye), e.otherDeduct, Math.round(r.net), Math.round(r.employerCost)]);
+    t.gross+=r.gross; t.nssfE+=r.nssfEmployee; t.nssfEr+=r.nssfEmployer; t.shif+=r.shif;
+    t.ahlE+=r.ahlEmployee; t.ahlEr+=r.ahlEmployer; t.nita+=RATES.nitaLevy; t.paye+=r.paye;
+    t.otherD+=(e.otherDeduct||0); t.net+=r.net; t.employerCost+=r.employerCost;
   });
-  downloadCSV(rows, `${(c.name||'payroll').replace(/\s+/g,'_')}_payroll.csv`);
+  rows.push(['TOTAL', '', '', Math.round(t.gross), Math.round(t.nssfE), Math.round(t.nssfEr),
+    Math.round(t.shif), Math.round(t.ahlE), Math.round(t.ahlEr), Math.round(t.nita),
+    Math.round(t.paye), Math.round(t.otherD), Math.round(t.net), Math.round(t.employerCost)]);
+  downloadCSV(rows, `${(c.name||'payroll').replace(/\s+/g,'_')}_payroll_register_${c.period||''}.csv`);
+}
+
+function exportPayrollRegisterPDF(){
+  const c = state.clients[state.activeClient];
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'a4', orientation:'landscape' });
+  const [br, bg, bb] = hexToRgb(c.brandColor || '#B08D57');
+  const left = 40; let y = 50;
+
+  if(c.logoDataUrl){
+    try{ doc.addImage(c.logoDataUrl, 'PNG', left, y - 30, 54, 54 * 0.75); }catch(e){}
+  }
+  const textLeft = c.logoDataUrl ? left + 68 : left;
+  doc.setFont('helvetica','bold'); doc.setFontSize(17);
+  doc.setTextColor(br,bg,bb);
+  doc.text(c.name || 'Payroll Register', textLeft, y);
+  doc.setTextColor(20,20,20);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text(`Pay period: ${c.period || 'Not set'}   |   Employer KRA PIN: ${c.kraPin || '-'}`, textLeft, y + 16);
+  y += 40;
+
+  const head = [[
+    'Name','Basic','Allowances','Gross','NSSF (Emp)','NSSF (Er)','SHIF',
+    'Housing (Emp)','Housing (Er)','NITA','PAYE','Other Ded.','Net Pay','Employer Cost'
+  ]];
+  const body = [];
+  const totals = { basic:0, allowances:0, gross:0, nssfE:0, nssfEr:0, shif:0, ahlE:0, ahlEr:0, nita:0, paye:0, otherD:0, net:0, cost:0 };
+  c.employees.forEach(e=>{
+    const r = calcEmployee(e);
+    body.push([
+      e.name||'-', fmt(e.basic), fmt(e.allowances), fmt(r.gross), fmt(r.nssfEmployee), fmt(r.nssfEmployer),
+      fmt(r.shif), fmt(r.ahlEmployee), fmt(r.ahlEmployer), fmt(RATES.nitaLevy), fmt(r.paye), fmt(e.otherDeduct), fmt(r.net), fmt(r.employerCost)
+    ]);
+    totals.basic+=e.basic||0; totals.allowances+=e.allowances||0; totals.gross+=r.gross;
+    totals.nssfE+=r.nssfEmployee; totals.nssfEr+=r.nssfEmployer; totals.shif+=r.shif;
+    totals.ahlE+=r.ahlEmployee; totals.ahlEr+=r.ahlEmployer; totals.nita+=RATES.nitaLevy;
+    totals.paye+=r.paye; totals.otherD+=(e.otherDeduct||0); totals.net+=r.net; totals.cost+=r.employerCost;
+  });
+  const footRow = [[
+    'TOTAL', fmt(totals.basic), fmt(totals.allowances), fmt(totals.gross), fmt(totals.nssfE), fmt(totals.nssfEr),
+    fmt(totals.shif), fmt(totals.ahlE), fmt(totals.ahlEr), fmt(totals.nita), fmt(totals.paye), fmt(totals.otherD), fmt(totals.net), fmt(totals.cost)
+  ]];
+
+  doc.autoTable({
+    startY: y,
+    head, body, foot: footRow,
+    margin: { left: 40, right: 40 },
+    styles: { fontSize: 7.5, cellPadding: 4 },
+    headStyles: { fillColor: [br,bg,bb], textColor: [255,255,255], fontStyle:'bold' },
+    footStyles: { fillColor: [235,235,235], textColor: [20,20,20], fontStyle:'bold' },
+    columnStyles: { 0: { halign:'left' } },
+    theme: 'grid'
+  });
+
+  const finalY = doc.lastAutoTable.finalY + 20;
+  doc.setFont('helvetica','italic'); doc.setFontSize(8);
+  doc.setTextColor(140,140,140);
+  doc.text('Generated by Sami Accountants Payroll Register. Verify statutory figures against current KRA/NSSF/SHA rates.', left, finalY);
+
+  doc.save(`${(c.name||'payroll').replace(/\s+/g,'_')}_payroll_register_${c.period||''}.pdf`);
+}
+
+async function emailAllPayslips(evt){
+  const c = state.clients[state.activeClient];
+  const targets = c.employees.filter(e => e.email);
+  const skipped = c.employees.filter(e => !e.email);
+  if(targets.length === 0){
+    alert('No employees have an email address on file yet. Add emails under each employee\'s Statutory identifiers first.');
+    return;
+  }
+  if(!confirm(`Send payslips to ${targets.length} employee(s) with an email on file?${skipped.length ? ` (${skipped.length} employee(s) will be skipped \u2014 no email on file.)` : ''}`)) return;
+
+  const btn = evt.target;
+  const originalText = btn.textContent;
+  let sent = 0; const failed = [];
+
+  for(const emp of targets){
+    btn.textContent = `Sending... (${sent + failed.length + 1}/${targets.length})`;
+    btn.disabled = true;
+    try{
+      const { doc } = generatePayslipPDF(emp.id);
+      const pdfBase64 = doc.output('datauristring').split(',')[1];
+      const { error } = await sb.functions.invoke('send-payslip', {
+        body: { to: emp.email, employeeName: emp.name, companyName: c.name, period: c.period, pdfBase64 }
+      });
+      if(error) throw error;
+      sent++;
+    } catch(err){
+      failed.push(emp.name || 'Unnamed');
+    }
+    await new Promise(r => setTimeout(r, 350)); // gentle pacing to avoid rate limits
+  }
+
+  btn.textContent = originalText; btn.disabled = false;
+  let summary = `Sent ${sent} of ${targets.length} payslip(s).`;
+  if(skipped.length) summary += ` ${skipped.length} skipped (no email on file).`;
+  if(failed.length) summary += ` Failed: ${failed.join(', ')}.`;
+  alert(summary);
 }
 
 /* ---------------- Render ---------------- */
@@ -1014,6 +1128,7 @@ function renderMain(){
 
     <div class="actions">
       <button class="btn primary" onclick="exportCSV()">Export payroll register (CSV)</button>
+      <button class="btn" onclick="exportPayrollRegisterPDF()">Export payroll register (PDF)</button>
       <button class="btn" onclick="exportKRA()">KRA P10A file</button>
       <button class="btn" onclick="exportNSSF()">NSSF return file</button>
       <button class="btn" onclick="exportSHA()">SHA/SHIF return file</button>
@@ -1022,6 +1137,7 @@ function renderMain(){
       <button class="btn" onclick="exportImportTemplate()">Download import template</button>
       <button class="btn" onclick="document.getElementById('csvFileInput').click()">Import employees (CSV)</button>
       <input type="file" id="csvFileInput" accept=".csv" style="display:none;" onchange="handleCSVImport(event)" />
+      <button class="btn primary" onclick="emailAllPayslips(event)">Email all payslips</button>
     </div>
     <div class="settings-note" style="margin-top:-16px;margin-bottom:26px;max-width:640px;">
       These three exports match real KRA P10A, NSSF, and SHA sample templates column-for-column. Fill in KRA PIN, National ID, NSSF/SHA numbers, and payroll number per employee (click a row &rarr; Statutory identifiers) for a complete file, or bulk-load them with "Import employees (CSV)" using the template above. If any authority changes its template layout, bring me the new sample and I'll update the export to match.
