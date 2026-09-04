@@ -266,7 +266,8 @@ const EMP_DB_FIELD = { name:'name', pin:'pin', idNumber:'id_number', nssfNo:'nss
                         employeeType:'employee_type', disability:'disability', exemptionCertNo:'exemption_cert_no',
                         benefitDescription:'benefit_description', benefitAmount:'benefit_amount', identityType:'identity_type' };
 const CLIENT_DB_FIELD = { name:'name', period:'period', kraPin:'kra_pin', nssfEmployerNo:'nssf_employer_no', shaEmployerNo:'sha_employer_no',
-                           brandColor:'brand_color', logoDataUrl:'logo_data_url', logoSize:'logo_size', logoAspect:'logo_aspect' };
+                           brandColor:'brand_color', logoDataUrl:'logo_data_url', logoSize:'logo_size', logoAspect:'logo_aspect',
+                           isPaid:'is_paid', trialPeriodUsed:'trial_period_used' };
 
 function hexToRgb(hex){
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((hex||'').trim());
@@ -375,6 +376,7 @@ async function fetchAllData(){
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
       brandColor: c.brand_color || '#B08D57', logoDataUrl: c.logo_data_url || '',
       logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
+      isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null,
       employees: (employees||[]).map(e => ({
         id: e.id, name: e.name, pin: e.pin, idNumber: e.id_number, nssfNo: e.nssf_no, shaNo: e.sha_no,
         basic: e.basic, allowances: e.allowances, pension: e.pension, insurance: e.insurance, deductionItems: e.deduction_items || [],
@@ -462,7 +464,8 @@ async function addClient(){
   const { data, error } = await sb.from('companies').insert({ user_id: userData.user.id, name: 'Untitled Client' }).select().single();
   if(error){ alert(error.message); return; }
   state.clients[data.id] = { name: data.name, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'',
-                              brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75, employees: [] };
+                              brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
+                              isPaid:false, trialPeriodUsed:null, employees: [] };
   state.activeClient = data.id;
   await addEmployeeRow();
 }
@@ -526,6 +529,43 @@ async function deleteClient(id, ev){
   render();
 }
 function selectClient(id){ state.activeClient = id; render(); }
+
+/* ---------------- Free trial gating ----------------
+   Each client gets one free payroll cycle (one pay period). The first time any
+   payslip/export action is used for a client, that period is locked in as their
+   trial period. Trying to run a DIFFERENT period afterward is blocked until the
+   client is marked as paid. This is a manual gate for now — no automated billing
+   is wired up yet, so "mark as paid" is a judgment call you make after collecting
+   payment outside the app (M-Pesa, bank transfer, etc.).
+------------------------------------------------------------------------------ */
+function requireAccess(c){
+  if(c.isPaid) return true;
+  const currentPeriod = c.period || '(no period set)';
+  if(!c.trialPeriodUsed){
+    c.trialPeriodUsed = currentPeriod;
+    sb.from('companies').update({ trial_period_used: currentPeriod }).eq('id', state.activeClient);
+    return true;
+  }
+  if(c.trialPeriodUsed === currentPeriod) return true;
+  alert(`This client's free payroll cycle (${c.trialPeriodUsed}) has already been used.\n\nTo run payroll for ${currentPeriod}, mark this client as paid first (button next to their name).`);
+  return false;
+}
+async function markClientPaid(){
+  const c = state.clients[state.activeClient];
+  if(!c) return;
+  if(!confirm(`Mark "${c.name || 'this client'}" as paid? This unlocks unlimited payroll cycles for them.`)) return;
+  c.isPaid = true;
+  await sb.from('companies').update({ is_paid: true }).eq('id', state.activeClient);
+  render();
+}
+async function markClientUnpaid(){
+  const c = state.clients[state.activeClient];
+  if(!c) return;
+  if(!confirm(`Move "${c.name || 'this client'}" back to trial status? They'll be restricted again once their trial period is used.`)) return;
+  c.isPaid = false;
+  await sb.from('companies').update({ is_paid: false }).eq('id', state.activeClient);
+  render();
+}
 async function updateClientField(field, value){
   state.clients[state.activeClient][field] = value;
   const { error } = await sb.from('companies').update({ [CLIENT_DB_FIELD[field]]: value }).eq('id', state.activeClient);
@@ -724,12 +764,15 @@ function generatePayslipPDF(empId){
 }
 
 function downloadPayslipPDF(empId){
+  const c = state.clients[state.activeClient];
+  if(!requireAccess(c)) return;
   const { doc, filename } = generatePayslipPDF(empId);
   doc.save(filename);
 }
 
 async function emailPayslip(empId, evt){
   const c = state.clients[state.activeClient];
+  if(!requireAccess(c)) return;
   const emp = c.employees.find(e => e.id === empId);
   if(!emp.email){
     const addr = prompt('Enter this employee\'s email address:');
@@ -910,6 +953,7 @@ function exportKRA(){
   // Matches the KRA iTax P10A "Simplified" employee details format — no header row,
   // 25 fixed-position columns. Verified against a real KRA-generated sample.
   const c = state.clients[state.activeClient];
+  if(!requireAccess(c)) return;
   const rows = c.employees.map(e=>{
     const r = calcEmployee(e);
     return [
@@ -946,6 +990,7 @@ function exportKRA(){
 function exportNSSF(){
   // Matches the NSSF new-format upload: PAYROLL NUMBER, SURNAME, OTHER NAMES, ID NO, KRA PIN, NSSF NO, GROSS PAY, VOLUNTARY
   const c = state.clients[state.activeClient];
+  if(!requireAccess(c)) return;
   const rows = [['PAYROLL NUMBER','SURNAME','OTHER NAMES','ID NO','KRA PIN','NSSF NO','GROSS PAY','VOLUNTARY']];
   c.employees.forEach(e=>{
     const { surname, otherNames } = splitName(e.name);
@@ -958,6 +1003,7 @@ function exportNSSF(){
 function exportSHA(){
   // Matches the SHA/SHIF upload: PAYROLL NUMBER, FIRSTNAME, LASTNAME, IDENTITY TYPE, ID NO, KRA PIN, NHIF NO, CONTRIBUTION AMOUNT, PHONE
   const c = state.clients[state.activeClient];
+  if(!requireAccess(c)) return;
   const rows = [['PAYROLL NUMBER','FIRSTNAME','LASTNAME','IDENTITY TYPE','ID NO','KRA PIN','NHIF NO','CONTRIBUTION AMOUNT','PHONE']];
   c.employees.forEach(e=>{
     const { surname, otherNames } = splitName(e.name);
@@ -1080,6 +1126,7 @@ async function handleCSVImport(event){
 
 function exportCSV(){
   const c = state.clients[state.activeClient];
+  if(!requireAccess(c)) return;
   const rows = [[
     'Name','Basic','Allowances','Gross',
     'NSSF (Employee)','NSSF (Employer)',
@@ -1105,6 +1152,7 @@ function exportCSV(){
 
 function exportPayrollRegisterPDF(){
   const c = state.clients[state.activeClient];
+  if(!requireAccess(c)) return;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'pt', format:'a4', orientation:'landscape' });
   const [br, bg, bb] = hexToRgb(c.brandColor || '#B08D57');
@@ -1167,6 +1215,7 @@ function exportPayrollRegisterPDF(){
 
 async function emailAllPayslips(evt){
   const c = state.clients[state.activeClient];
+  if(!requireAccess(c)) return;
   const targets = c.employees.filter(e => e.email);
   const skipped = c.employees.filter(e => !e.email);
   if(targets.length === 0){
@@ -1240,6 +1289,18 @@ function renderMain(){
       <div class="period-row">
         <input type="month" value="${c.period || ''}" onchange="updateClientField('period', this.value)" />
       </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
+      ${c.isPaid
+        ? `<span style="font-size:12px;background:rgba(176,141,87,0.15);color:var(--gold);padding:5px 10px;border-radius:4px;">Active (paid)</span>
+           <button class="btn" style="font-size:11.5px;padding:5px 10px;" onclick="markClientUnpaid()">Move back to trial</button>`
+        : (c.trialPeriodUsed
+            ? `<span style="font-size:12px;background:rgba(199,123,110,0.18);color:#C77B6E;padding:5px 10px;border-radius:4px;">Free trial used (${c.trialPeriodUsed})${c.trialPeriodUsed !== (c.period||'') ? ' \u2014 new periods blocked' : ''}</span>
+               <button class="btn primary" style="font-size:11.5px;padding:5px 10px;" onclick="markClientPaid()">Mark as paid</button>`
+            : `<span style="font-size:12px;background:rgba(176,141,87,0.12);color:var(--muted);padding:5px 10px;border-radius:4px;">Free trial: 1 payroll cycle available</span>`
+          )
+      }
     </div>
 
     <div class="settings-grid" style="margin-bottom:22px;">
