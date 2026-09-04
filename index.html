@@ -808,8 +808,8 @@ function openDrawer(empId){
           <select onchange="updateDeductionItem('${emp.id}', ${idx}, 'type', this.value)" style="flex:1.2;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 6px;font-size:12px;">
             ${DEDUCTION_TYPES.map(t => `<option ${d.type===t?'selected':''}>${t}</option>`).join('')}
           </select>
-          <input value="${d.description||''}" placeholder="Note (optional)" onchange="updateDeductionItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.4;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
           <input type="number" value="${d.amount||''}" placeholder="0" oninput="updateDeductionItem('${emp.id}', ${idx}, 'amount', this.value)" style="width:80px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;"/>
+          <input value="${d.description||''}" placeholder="Note (optional)" onchange="updateDeductionItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.4;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
           <span class="row-del" style="opacity:.6;" onclick="removeDeductionItem('${emp.id}', ${idx})">&times;</span>
         </div>
       `).join('')}
