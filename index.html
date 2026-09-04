@@ -901,7 +901,7 @@ function openDrawer(empId){
         <div class="settings-field"><label>National ID</label><input value="${esc(emp.idNumber)}" onchange="updateEmployeeField('${emp.id}','idNumber',this.value); openDrawer('${emp.id}')"/></div>
         <div class="settings-field"><label>NSSF number</label><input value="${esc(emp.nssfNo)}" onchange="updateEmployeeField('${emp.id}','nssfNo',this.value); openDrawer('${emp.id}')"/></div>
         <div class="settings-field"><label>SHA number</label><input value="${esc(emp.shaNo)}" onchange="updateEmployeeField('${emp.id}','shaNo',this.value); openDrawer('${emp.id}')"/></div>
-        <div class="settings-field"><label>Payroll number</label><input value="${esc(emp.payrollNumber)}" placeholder="e.g. HPL001" onchange="updateEmployeeField('${emp.id}','payrollNumber',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>Payroll number</label><input value="${esc(emp.payrollNumber)}" placeholder="e.g. EMP001" onchange="updateEmployeeField('${emp.id}','payrollNumber',this.value); openDrawer('${emp.id}')"/></div>
         <div class="settings-field"><label>Phone</label><input value="${esc(emp.phone)}" onchange="updateEmployeeField('${emp.id}','phone',this.value); openDrawer('${emp.id}')"/></div>
         <div class="settings-field" style="grid-column:1 / -1;"><label>Email (for payslip delivery)</label><input type="email" value="${esc(emp.email)}" placeholder="employee@example.com" onchange="updateEmployeeField('${emp.id}','email',this.value); openDrawer('${emp.id}')"/></div>
       </div>
@@ -1098,7 +1098,7 @@ const IMPORT_NUMERIC_FIELDS = ['basic','allowances','pension','insurance','other
 
 function exportImportTemplate(){
   const rows = [IMPORT_HEADERS, [
-    'HPL001','25907329','James Mbugua Njunge','0700000000','james@example.com','A005431465N','2025146591','25907329','30000',
+    'EMP001','30112233','John Otieno Wanjala','0711000000','john.otieno@example.com','A012345678Z','1122334455','30112233','30000',
     '0','0','0','0','Resident','Primary Employee','No','','National ID','Benefit not given','0'
   ]];
   downloadCSV(rows, 'employee_import_template.csv');
