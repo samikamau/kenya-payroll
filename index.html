@@ -254,6 +254,7 @@ let authMode = 'signin'; // or 'signup'
 
 function fmt(n){
   n = Math.round(n||0);
+  if(n === 0) return '-';
   return n.toLocaleString('en-KE');
 }
 const TEXT_FIELDS = ['name','pin','idNumber','nssfNo','shaNo','payrollNumber','phone','email',
@@ -308,7 +309,7 @@ function calcEmployee(e){
   const nssfEmployee = tier1 + tier2;
   const nssfEmployer = nssfEmployee;
 
-  const shif = Math.max(gross * RATES.shifRate, RATES.shifMin);
+  const shif = gross > 0 ? Math.max(gross * RATES.shifRate, RATES.shifMin) : 0;
   const ahlEmployee = gross * RATES.ahlRate;
   const ahlEmployer = gross * RATES.ahlRate;
 
@@ -323,11 +324,12 @@ function calcEmployee(e){
   const totalDeductions = nssfEmployee + shif + ahlEmployee + voluntaryPension + paye + otherDeduct;
   const net = gross - totalDeductions;
 
-  const employerCost = gross + nssfEmployer + ahlEmployer + RATES.nitaLevy;
+  const nita = gross > 0 ? RATES.nitaLevy : 0;
+  const employerCost = gross + nssfEmployer + ahlEmployer + nita;
 
   return { gross, nssfEmployee, nssfEmployer, shif, ahlEmployee, ahlEmployer,
            voluntaryPension, taxable, grossTax, insuranceRelief, paye,
-           otherDeduct, totalDeductions, net, employerCost };
+           otherDeduct, totalDeductions, net, nita, employerCost };
 }
 
 /* ---------------- Auth ---------------- */
@@ -797,7 +799,7 @@ function openDrawer(empId){
       <h3>Employer cost (not deducted from employee)</h3>
       <div class="payslip-line"><span>NSSF employer match</span><span>${fmt(r.nssfEmployer)}</span></div>
       <div class="payslip-line"><span>Housing Levy employer match</span><span>${fmt(r.ahlEmployer)}</span></div>
-      <div class="payslip-line"><span>NITA levy</span><span>${fmt(RATES.nitaLevy)}</span></div>
+      <div class="payslip-line"><span>NITA levy</span><span>${fmt(r.nita)}</span></div>
       <div class="payslip-line total"><span>Total cost to employer</span><span>${fmt(r.employerCost)}</span></div>
     </div>
 
@@ -1010,10 +1012,10 @@ function exportCSV(){
     const r = calcEmployee(e);
     rows.push([e.name, e.basic, e.allowances, Math.round(r.gross),
       Math.round(r.nssfEmployee), Math.round(r.nssfEmployer),
-      Math.round(r.shif), Math.round(r.ahlEmployee), Math.round(r.ahlEmployer), RATES.nitaLevy,
+      Math.round(r.shif), Math.round(r.ahlEmployee), Math.round(r.ahlEmployer), Math.round(r.nita),
       Math.round(r.paye), Math.round(r.otherDeduct), Math.round(r.net), Math.round(r.employerCost)]);
     t.gross+=r.gross; t.nssfE+=r.nssfEmployee; t.nssfEr+=r.nssfEmployer; t.shif+=r.shif;
-    t.ahlE+=r.ahlEmployee; t.ahlEr+=r.ahlEmployer; t.nita+=RATES.nitaLevy; t.paye+=r.paye;
+    t.ahlE+=r.ahlEmployee; t.ahlEr+=r.ahlEmployer; t.nita+=r.nita; t.paye+=r.paye;
     t.otherD+=r.otherDeduct; t.net+=r.net; t.employerCost+=r.employerCost;
   });
   rows.push(['TOTAL', '', '', Math.round(t.gross), Math.round(t.nssfE), Math.round(t.nssfEr),
@@ -1053,11 +1055,11 @@ function exportPayrollRegisterPDF(){
     const r = calcEmployee(e);
     body.push([
       e.name||'-', fmt(e.basic), fmt(e.allowances), fmt(r.gross), fmt(r.nssfEmployee), fmt(r.nssfEmployer),
-      fmt(r.shif), fmt(r.ahlEmployee), fmt(r.ahlEmployer), fmt(RATES.nitaLevy), fmt(r.paye), fmt(r.otherDeduct), fmt(r.net), fmt(r.employerCost)
+      fmt(r.shif), fmt(r.ahlEmployee), fmt(r.ahlEmployer), fmt(r.nita), fmt(r.paye), fmt(r.otherDeduct), fmt(r.net), fmt(r.employerCost)
     ]);
     totals.basic+=e.basic||0; totals.allowances+=e.allowances||0; totals.gross+=r.gross;
     totals.nssfE+=r.nssfEmployee; totals.nssfEr+=r.nssfEmployer; totals.shif+=r.shif;
-    totals.ahlE+=r.ahlEmployee; totals.ahlEr+=r.ahlEmployer; totals.nita+=RATES.nitaLevy;
+    totals.ahlE+=r.ahlEmployee; totals.ahlEr+=r.ahlEmployer; totals.nita+=r.nita;
     totals.paye+=r.paye; totals.otherD+=r.otherDeduct; totals.net+=r.net; totals.cost+=r.employerCost;
   });
   const footRow = [[
