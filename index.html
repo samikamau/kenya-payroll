@@ -619,11 +619,21 @@ function generatePayslipPDF(empId){
   line('SHIF (2.75%)', fmt(r.shif));
   line('Housing Levy (1.5%)', fmt(r.ahlEmployee));
   if(r.voluntaryPension) line('Voluntary pension', fmt(r.voluntaryPension));
+  y += 4;
   line('Taxable pay', fmt(r.taxable));
+  line('Tax on taxable pay', fmt(r.grossTax));
+  line('Less: personal relief', `-${fmt(RATES.personalRelief)}`);
+  if(r.insuranceRelief) line('Less: insurance relief', `-${fmt(r.insuranceRelief)}`);
   line('PAYE', fmt(r.paye), { bold:true });
-  (emp.deductionItems||[]).forEach(d => {
-    if(d.amount) line(d.description ? `${d.type}: ${d.description}` : d.type, fmt(d.amount));
-  });
+
+  const hasOtherDeductions = (emp.deductionItems||[]).some(d => d.amount);
+  if(hasOtherDeductions){
+    section('Other deductions');
+    (emp.deductionItems||[]).forEach(d => {
+      if(d.amount) line(d.description ? `${d.type}: ${d.description}` : d.type, fmt(d.amount));
+    });
+    line('Total other deductions', fmt(r.otherDeduct), { bold:true });
+  }
 
   section('Net pay');
   doc.setFont('helvetica','bold'); doc.setFontSize(14);
