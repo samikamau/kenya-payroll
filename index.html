@@ -491,7 +491,14 @@ async function deleteClient(id, ev){
     });
     if(error) throw error;
   } catch(err){
-    alert('Could not send a verification code: ' + (err.message || 'the verification email function may not be set up yet.'));
+    let detail = err.message || 'the verification email function may not be set up yet.';
+    try{
+      if(err.context && typeof err.context.json === 'function'){
+        const body = await err.context.json();
+        if(body && body.error) detail = body.error;
+      }
+    }catch(_){ /* fall back to the generic message above if the body can't be read */ }
+    alert('Could not send a verification code: ' + detail);
     return;
   }
 
@@ -748,7 +755,14 @@ async function emailPayslip(empId, evt){
     if(error) throw error;
     alert(`Payslip sent to ${emp.email}`);
   } catch(err){
-    alert('Could not send email: ' + (err.message || 'the email function may not be set up yet.'));
+    let detail = err.message || 'the email function may not be set up yet.';
+    try{
+      if(err.context && typeof err.context.json === 'function'){
+        const body = await err.context.json();
+        if(body && body.error) detail = body.error;
+      }
+    }catch(_){}
+    alert('Could not send email: ' + detail);
   } finally {
     btn.textContent = originalText; btn.disabled = false;
   }
