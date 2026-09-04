@@ -538,7 +538,7 @@ function generatePayslipPDF(empId){
   doc.setTextColor(20,20,20);
   y += 22;
   doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(90,90,90);
-  doc.text(`Pay period: ${c.period || 'Not set'}`, textLeft, y); y += 14;
+  doc.text(`Pay period: ${c.period || 'Not set'}   |   Employer KRA PIN: ${c.kraPin || '-'}`, textLeft, y); y += 14;
   doc.text(`Employee: ${emp.name || 'Unnamed'}  |  KRA PIN: ${emp.pin||'-'}  |  Payroll No: ${emp.payrollNumber||'-'}`, textLeft, y);
   doc.setTextColor(20,20,20); y += 10;
 
