@@ -888,8 +888,8 @@ function exportSHA(){
 
 /* ---------------- Bulk import ---------------- */
 const IMPORT_HEADERS = [
-  'Name','KRA PIN','National ID','NSSF Number','SHA Number','Payroll Number','Phone','Email',
-  'Basic Salary','Allowances','Pension','Insurance Premium','Other Deductions',
+  'Payroll Number','National ID','Name','Phone','Email','KRA PIN','NSSF Number','SHA Number','Basic Salary',
+  'Allowances','Pension','Insurance Premium','Other Deductions',
   'Residential Status','Employee Type','Disability','Exemption Certificate No',
   'Identity Type','Benefit Description','Benefit Amount'
 ];
@@ -905,8 +905,8 @@ const IMPORT_NUMERIC_FIELDS = ['basic','allowances','pension','insurance','other
 
 function exportImportTemplate(){
   const rows = [IMPORT_HEADERS, [
-    'James Mbugua Njunge','A005431465N','25907329','2025146591','','HPL001','0700000000','james@example.com',
-    '30000','0','0','0','0','Resident','Primary Employee','No','','National ID','Benefit not given','0'
+    'HPL001','25907329','James Mbugua Njunge','0700000000','james@example.com','A005431465N','2025146591','25907329','30000',
+    '0','0','0','0','Resident','Primary Employee','No','','National ID','Benefit not given','0'
   ]];
   downloadCSV(rows, 'employee_import_template.csv');
 }
@@ -940,7 +940,7 @@ async function handleCSVImport(event){
   const rows = parseCSVText(text);
   if(rows.length < 2){ alert('That file has no data rows to import.'); event.target.value = ''; return; }
 
-  const headerRow = rows[0].map(h => h.trim().toLowerCase());
+  const headerRow = rows[0].map((h, i) => (i === 0 ? h.replace(/^\uFEFF/, '') : h).trim().toLowerCase());
   const dataRows = rows.slice(1);
 
   const newEmployees = dataRows.map(cells => {
@@ -953,8 +953,14 @@ async function handleCSVImport(event){
     headerRow.forEach((h, i) => {
       const field = IMPORT_FIELD_MAP[h];
       if(!field) return;
-      const raw = (cells[i]||'').trim();
-      emp[field] = IMPORT_NUMERIC_FIELDS.includes(field) ? (parseFloat(raw) || 0) : raw;
+      let raw = (cells[i]||'').trim();
+      if(raw.startsWith("'")) raw = raw.slice(1); // strip Excel's text-protection apostrophe (e.g. on NSSF/ID numbers)
+      if(IMPORT_NUMERIC_FIELDS.includes(field)){
+        raw = raw.replace(/,/g, ''); // strip thousand separators (e.g. "30,000.00") before parsing
+        emp[field] = parseFloat(raw) || 0;
+      } else {
+        emp[field] = raw;
+      }
     });
     // The single "Other Deductions" import column becomes one "Other" line item,
     // since deductions are now tracked as a categorized list per employee.
