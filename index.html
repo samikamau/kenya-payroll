@@ -512,9 +512,14 @@ async function updateEmployeeField(empId, field, value){
   if(error) console.error(error);
 }
 
+const _deductionSaveTimers = {};
 async function saveDeductionItems(empId, items){
   const { error } = await sb.from('employees').update({ deduction_items: items }).eq('id', empId);
   if(error) console.error(error);
+}
+function saveDeductionItemsDebounced(empId, items){
+  clearTimeout(_deductionSaveTimers[empId]);
+  _deductionSaveTimers[empId] = setTimeout(() => saveDeductionItems(empId, items), 500);
 }
 function addDeductionItem(empId){
   const c = state.clients[state.activeClient];
@@ -524,13 +529,31 @@ function addDeductionItem(empId){
   saveDeductionItems(empId, emp.deductionItems);
   openDrawer(empId);
 }
+function refreshDrawerTotals(empId){
+  const c = state.clients[state.activeClient];
+  const emp = c.employees.find(e => e.id === empId);
+  if(!emp) return;
+  const r = calcEmployee(emp);
+  const totalEl = document.getElementById('drawerOtherDeductTotal');
+  if(totalEl) totalEl.textContent = fmt(r.otherDeduct);
+  const netEl = document.getElementById('drawerNetPay');
+  if(netEl) netEl.textContent = 'KES ' + fmt(r.net);
+}
 function updateDeductionItem(empId, idx, field, value){
   const c = state.clients[state.activeClient];
   const emp = c.employees.find(e => e.id === empId);
   emp.deductionItems[idx][field] = field === 'amount' ? (parseFloat(value)||0) : value;
-  saveDeductionItems(empId, emp.deductionItems);
-  render();
-  openDrawer(empId);
+  if(field === 'amount'){
+    saveDeductionItemsDebounced(empId, emp.deductionItems);
+  } else {
+    saveDeductionItems(empId, emp.deductionItems);
+  }
+  render(); // safe: only touches the main table/rail, never the open drawer, so focus is never lost
+  if(field === 'type'){
+    openDrawer(empId); // dropdown selection isn't continuous typing, a full refresh here is fine
+  } else {
+    refreshDrawerTotals(empId); // patches just the total + net pay figures live, without rebuilding inputs mid-keystroke
+  }
 }
 function removeDeductionItem(empId, idx){
   const c = state.clients[state.activeClient];
@@ -747,17 +770,17 @@ function openDrawer(empId){
             ${DEDUCTION_TYPES.map(t => `<option ${d.type===t?'selected':''}>${t}</option>`).join('')}
           </select>
           <input value="${d.description||''}" placeholder="Note (optional)" onchange="updateDeductionItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.4;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
-          <input type="number" value="${d.amount||''}" placeholder="0" onchange="updateDeductionItem('${emp.id}', ${idx}, 'amount', this.value)" style="width:80px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;"/>
+          <input type="number" value="${d.amount||''}" placeholder="0" oninput="updateDeductionItem('${emp.id}', ${idx}, 'amount', this.value)" style="width:80px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;"/>
           <span class="row-del" style="opacity:.6;" onclick="removeDeductionItem('${emp.id}', ${idx})">&times;</span>
         </div>
       `).join('')}
       <button class="add-row-btn" style="padding:6px 2px;" onclick="addDeductionItem('${emp.id}')">+ Add deduction</button>
-      ${r.otherDeduct ? `<div class="payslip-line total" style="margin-top:8px;"><span>Total other deductions</span><span>${fmt(r.otherDeduct)}</span></div>` : ''}
+      ${(emp.deductionItems||[]).length > 0 ? `<div class="payslip-line total" style="margin-top:8px;"><span>Total other deductions</span><span id="drawerOtherDeductTotal">${fmt(r.otherDeduct)}</span></div>` : ''}
     </div>
 
     <div class="payslip-section">
       <h3>Net pay</h3>
-      <div class="payslip-line net total"><span>Take-home</span><span>KES ${fmt(r.net)}</span></div>
+      <div class="payslip-line net total"><span>Take-home</span><span id="drawerNetPay">KES ${fmt(r.net)}</span></div>
     </div>
 
     <div class="payslip-section">
