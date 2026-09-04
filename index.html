@@ -183,8 +183,12 @@
     <h1 id="authTitle">Sign in</h1>
     <div class="sub">Finlens Africa &middot; Payroll</div>
     <div class="auth-error" id="authError"></div>
-    <div class="auth-field"><label>Email</label><input type="email" id="authEmail" /></div>
-    <div class="auth-field"><label>Password</label><input type="password" id="authPassword" onkeydown="if(event.key==='Enter') handleAuthSubmit()" /></div>
+    <div class="auth-field"><label>Email</label><input type="email" id="authEmail" autocomplete="email" /></div>
+    <div class="auth-field"><label>Password</label><input type="password" id="authPassword" autocomplete="current-password" onkeydown="if(event.key==='Enter') handleAuthSubmit()" /></div>
+    <div class="auth-field" style="display:flex;align-items:center;gap:8px;margin-bottom:18px;">
+      <input type="checkbox" id="authRememberMe" checked style="width:15px;height:15px;accent-color:var(--gold);" />
+      <label for="authRememberMe" style="margin:0;font-size:12.5px;color:var(--muted);cursor:pointer;">Remember me on this device</label>
+    </div>
     <button class="btn primary" style="width:100%;" id="authSubmit" onclick="handleAuthSubmit()">Sign in</button>
     <div class="auth-toggle" id="authToggle">No account yet? <a onclick="toggleAuthMode()">Create one</a></div>
   </div>
@@ -247,7 +251,28 @@ let RATES = {
 --------------------------------------------------------------------- */
 const SUPABASE_URL = 'https://fmargcknmofzpihujzdc.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_2-DM351xvcU2tXUIuX-vQg_CTpuRD3q';
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// "Remember me" support: when checked, the session persists across browser restarts (localStorage).
+// When unchecked, it's kept only for the current browser session (sessionStorage) — closing the
+// browser signs the person out. getItem checks both so an existing session is found either way;
+// setItem decides where a NEW session gets written based on the checkbox at the moment of sign-in.
+let rememberMeChoice = true;
+const rememberAwareStorage = {
+  getItem: (key) => window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key),
+  setItem: (key, value) => {
+    if(rememberMeChoice){
+      window.localStorage.setItem(key, value);
+      window.sessionStorage.removeItem(key);
+    } else {
+      window.sessionStorage.setItem(key, value);
+      window.localStorage.removeItem(key);
+    }
+  },
+  removeItem: (key) => {
+    window.localStorage.removeItem(key);
+    window.sessionStorage.removeItem(key);
+  }
+};
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storage: rememberAwareStorage } });
 
 let state = { clients: {}, activeClient: null, settingsOpen: false };
 let authMode = 'signin'; // or 'signup'
@@ -342,11 +367,13 @@ function toggleAuthMode(){
   document.getElementById('authToggle').innerHTML = authMode === 'signin'
     ? `No account yet? <a onclick="toggleAuthMode()">Create one</a>`
     : `Already have an account? <a onclick="toggleAuthMode()">Sign in</a>`;
+  document.getElementById('authPassword').setAttribute('autocomplete', authMode === 'signin' ? 'current-password' : 'new-password');
   showAuthError('');
 }
 async function handleAuthSubmit(){
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
+  rememberMeChoice = document.getElementById('authRememberMe').checked;
   showAuthError('');
   if(!email || !password){ showAuthError('Enter an email and password.'); return; }
   const fn = authMode === 'signin' ? sb.auth.signInWithPassword : sb.auth.signUp;
@@ -1298,7 +1325,7 @@ function renderMain(){
         : (c.trialPeriodUsed
             ? `<span style="font-size:12px;background:rgba(199,123,110,0.18);color:#C77B6E;padding:5px 10px;border-radius:4px;">Free trial used (${c.trialPeriodUsed})${c.trialPeriodUsed !== (c.period||'') ? ' \u2014 new periods blocked' : ''}</span>
                <button class="btn primary" style="font-size:11.5px;padding:5px 10px;" onclick="markClientPaid()">Mark as paid</button>`
-            : `<span style="font-size:12px;background:rgba(176,141,87,0.12);color:var(--muted);padding:5px 10px;border-radius:4px;">Free trial: 1 payroll cycle available</span>`
+            : `<span style="font-size:12.5px;font-weight:600;background:linear-gradient(135deg, var(--gold), #D9B876);color:var(--bg);padding:6px 12px;border-radius:5px;box-shadow:0 0 0 1px rgba(176,141,87,0.4);">✨ Free trial: 1 payroll cycle available — try it now</span>`
           )
       }
     </div>
