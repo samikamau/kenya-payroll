@@ -260,6 +260,7 @@
     <div class="rail-footer">
       <button class="rail-btn" onclick="toggleSettings()">Statutory rates &amp; settings</button>
       <button class="rail-btn" onclick="toggleActivityLog()">Activity log</button>
+      <button class="rail-btn" onclick="toggleSharePanel()">Share &amp; access</button>
       <button class="rail-btn" onclick="handleSignOut()">Sign out</button>
       <div class="user-badge" id="userBadge"></div>
     </div>
@@ -332,7 +333,7 @@ const rememberAwareStorage = {
 };
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storage: rememberAwareStorage } });
 
-let state = { clients: {}, activeClient: null, settingsOpen: false, activityLogOpen: false };
+let state = { clients: {}, activeClient: null, settingsOpen: false, activityLogOpen: false, sharePanelOpen: false, currentUserId: null };
 let employeeRowLimit = parseInt(localStorage.getItem('employeeRowLimit')) || 5;
 
 const EMP_TABLE_COLS = [
@@ -589,7 +590,7 @@ async function fetchAllData(){
     const { data: auditLog } = await sb.from('audit_log').select('*').eq('company_id', c.id).order('created_at', { ascending: false }).limit(50);
     const { data: payrollPeriods } = await sb.from('payroll_periods').select('*').eq('company_id', c.id);
     state.clients[c.id] = {
-      name: c.name, period: c.period, kraPin: c.kra_pin,
+      name: c.name, period: c.period, kraPin: c.kra_pin, ownerId: c.user_id,
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
       brandColor: c.brand_color || '#B08D57', logoDataUrl: c.logo_data_url || '',
       logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
@@ -639,6 +640,7 @@ async function boot(){
   document.getElementById('authScreen').style.display = 'none';
   document.getElementById('appRoot').style.display = 'flex';
   document.getElementById('userBadge').textContent = session.user.email;
+  state.currentUserId = session.user.id;
   await loadRates();
   await fetchAllData();
   render();
@@ -1175,6 +1177,65 @@ function toggleSettings(){
 function toggleActivityLog(){
   state.activityLogOpen = !state.activityLogOpen;
   render();
+}
+
+/* ---------------- Multi-user company sharing ----------------
+   Frontend hides/shows the panel for convenience only — the real security is the RLS
+   policies in migration_012 (has_company_access). Even if this panel were shown to someone
+   who shouldn't manage sharing, the database itself would reject their insert/delete.
+------------------------------------------------------------------------------------- */
+let shareListCache = {}; // companyId -> array of { id, email }
+async function toggleSharePanel(){
+  state.sharePanelOpen = !state.sharePanelOpen;
+  if(state.sharePanelOpen && state.activeClient) await loadShares(state.activeClient);
+  render();
+}
+async function loadShares(companyId){
+  const { data, error } = await sb.from('company_access').select('*').eq('company_id', companyId);
+  if(error){ console.error(error); shareListCache[companyId] = []; return; }
+  shareListCache[companyId] = (data||[]).map(r => ({ id: r.id, email: r.granted_email, userId: r.user_id }));
+}
+async function shareCompanyWithColleague(){
+  const email = prompt('Enter the email of a colleague who already has an account — they\'ll get full access to this client:');
+  if(!email) return;
+  const cleanEmail = email.trim().toLowerCase();
+  const { data: foundId, error: lookupError } = await sb.rpc('get_user_id_by_email', { lookup_email: cleanEmail });
+  if(lookupError){ alert('Could not look up that email: ' + lookupError.message); return; }
+  if(!foundId){ alert(`No account found for ${cleanEmail}. Ask your colleague to sign up first (using the same sign-in screen), then try sharing again.`); return; }
+  const { data: userData } = await sb.auth.getUser();
+  const { error } = await sb.from('company_access').insert({
+    company_id: state.activeClient, user_id: foundId, granted_email: cleanEmail, granted_by: userData?.user?.id
+  });
+  if(error){ alert('Could not share: ' + error.message); return; }
+  logAudit('Client shared', `Access granted to ${cleanEmail}`);
+  await loadShares(state.activeClient);
+  render();
+}
+async function revokeShare(accessId, email){
+  if(!confirm(`Remove ${email}'s access to this client?`)) return;
+  const { error } = await sb.from('company_access').delete().eq('id', accessId);
+  if(error){ alert('Could not revoke access: ' + error.message); return; }
+  logAudit('Client access revoked', `Removed access for ${email}`);
+  await loadShares(state.activeClient);
+  render();
+}
+function renderSharePanel(c){
+  const shares = shareListCache[state.activeClient] || [];
+  const isOwner = c.ownerId === state.currentUserId;
+  return `
+    <div class="settings-panel">
+      <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:4px;">Share &amp; access — ${esc(c.name) || 'this client'}</h3>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px;">${isOwner ? 'People with access to this client (full access, same as yours).' : 'You have shared access to this client. Only the owner can manage who else has access.'}</div>
+      ${shares.length === 0 ? `<div style="color:var(--muted);font-size:12.5px;padding:6px 0;">Not shared with anyone yet.</div>` : ''}
+      ${shares.map(s => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px;">
+          <span>${esc(s.email)}</span>
+          ${isOwner ? `<span style="color:#C77B6E;cursor:pointer;font-size:11.5px;" onclick="revokeShare('${s.id}', '${esc(s.email)}')">Remove</span>` : ''}
+        </div>
+      `).join('')}
+      ${isOwner ? `<button class="btn primary" style="margin-top:14px;" onclick="shareCompanyWithColleague()">+ Share with a colleague</button>` : ''}
+    </div>
+  `;
 }
 function renderActivityLog(c){
   const entries = c.auditLog || [];
@@ -1899,7 +1960,7 @@ function renderRail(){
   const entries = Object.entries(state.clients);
   list.innerHTML = `
     <select onchange="selectClient(this.value)" style="width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:9px 10px;font-family:'Inter',sans-serif;font-size:13.5px;margin-bottom:8px;">
-      ${entries.map(([id,c]) => `<option value="${id}" ${id===state.activeClient?'selected':''}>${esc(c.name) || 'Untitled Client'}</option>`).join('')}
+      ${entries.map(([id,c]) => `<option value="${id}" ${id===state.activeClient?'selected':''}>${esc(c.name) || 'Untitled Client'}${c.ownerId !== state.currentUserId ? ' (shared)' : ''}</option>`).join('')}
     </select>
     ${entries.length > 0 ? `<button class="rail-btn" style="color:#C77B6E;" onclick="deleteClient(state.activeClient, event)">Delete this client</button>` : ''}
   `;
@@ -2130,6 +2191,7 @@ function renderMain(){
 
     ${state.settingsOpen ? renderSettings() : ''}
     ${state.activityLogOpen ? renderActivityLog(c) : ''}
+    ${state.sharePanelOpen ? renderSharePanel(c) : ''}
 
     <div class="summary">
       <div class="card"><div class="label">Active employees</div><div class="value">${activeEmployees}</div></div>
