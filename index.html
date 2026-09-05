@@ -581,6 +581,7 @@ async function fetchAllData(){
     const { data: employees } = await sb.from('employees').select('*').eq('company_id', c.id).order('created_at');
     const { data: leaveRequests } = await sb.from('leave_requests').select('*').eq('company_id', c.id).order('start_date', { ascending: false });
     const { data: auditLog } = await sb.from('audit_log').select('*').eq('company_id', c.id).order('created_at', { ascending: false }).limit(50);
+    const { data: payrollPeriods } = await sb.from('payroll_periods').select('*').eq('company_id', c.id);
     state.clients[c.id] = {
       name: c.name, period: c.period, kraPin: c.kra_pin,
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
@@ -589,6 +590,7 @@ async function fetchAllData(){
       isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null,
       view: 'payroll',
       auditLog: (auditLog||[]).map(a => ({ id: a.id, userEmail: a.user_email, action: a.action, details: a.details, createdAt: a.created_at })),
+      payrollPeriods: (payrollPeriods||[]).map(p => ({ id: p.id, period: p.period, status: p.status, employeeCount: p.employee_count, totalGross: p.total_gross, totalNet: p.total_net, totalPaye: p.total_paye, closedBy: p.closed_by, closedAt: p.closed_at })),
       leaveRequests: (leaveRequests||[]).map(l => ({
         id: l.id, employeeId: l.employee_id, leaveType: l.leave_type, startDate: l.start_date, endDate: l.end_date,
         days: l.days, status: l.status, notes: l.notes||''
@@ -683,7 +685,7 @@ async function addClient(){
   if(error){ alert(error.message); return; }
   state.clients[data.id] = { name: data.name, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'',
                               brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
-                              isPaid:false, trialPeriodUsed:null, view:'payroll', leaveRequests:[], auditLog:[], employees: [] };
+                              isPaid:false, trialPeriodUsed:null, view:'payroll', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = data.id;
   await addEmployeeRow();
 }
@@ -759,6 +761,27 @@ async function logAudit(action, details){
   } catch(e){ console.error('audit log failed', e); }
 }
 
+/* ---------------- Payroll period locking ----------------
+   Once a period is Closed, it becomes permanently read-only — enforced first here for a clean
+   UX (the person gets a clear message instead of a silent failed save), and enforced again,
+   unconditionally, at the database level via RLS (migration_010) so the lock holds even if
+   someone bypasses the app entirely and talks to Supabase directly.
+------------------------------------------------------------------------------------------- */
+function getPeriodRecord(c, period){
+  return (c.payrollPeriods||[]).find(pp => pp.period === period);
+}
+function isPeriodClosed(c, period){
+  const p = getPeriodRecord(c, period);
+  return !!(p && p.status === 'Closed');
+}
+function blockIfClosed(c){
+  if(isPeriodClosed(c, c.period)){
+    alert(`${c.period} is closed and permanently locked. Switch to a different (open) pay period to make changes — closed periods cannot be amended, per your payroll integrity policy.`);
+    return true;
+  }
+  return false;
+}
+
 /* ---------------- Free trial gating ----------------
    Each client gets one free payroll cycle (one pay period). The first time any
    payslip/export action is used for a client, that period is locked in as their
@@ -803,6 +826,8 @@ async function updateClientField(field, value){
   if(error) console.error(error);
 }
 async function addEmployeeRow(){
+  const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)) return;
   const { data, error } = await sb.from('employees').insert({ company_id: state.activeClient }).select().single();
   if(error){ alert(error.message); return; }
   state.clients[state.activeClient].employees.push({
@@ -818,6 +843,7 @@ async function addEmployeeRow(){
 }
 async function deleteEmployeeRow(empId){
   const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)) return;
   const emp = c.employees.find(e => e.id === empId);
   const empName = emp ? (emp.name || 'Unnamed employee') : 'Unknown';
   const { error } = await sb.from('employees').delete().eq('id', empId);
@@ -829,6 +855,7 @@ async function deleteEmployeeRow(empId){
 }
 async function updateEmployeeField(empId, field, value){
   const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)){ render(); return; }
   const emp = c.employees.find(e => e.id === empId);
   const oldValue = emp[field];
   emp[field] = TEXT_FIELDS.includes(field) ? value : (parseFloat(value) || 0);
@@ -851,6 +878,7 @@ function saveDeductionItemsDebounced(empId, items){
 }
 function addDeductionItem(empId){
   const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)) return;
   const emp = c.employees.find(e => e.id === empId);
   if(!emp.deductionItems) emp.deductionItems = [];
   emp.deductionItems.push({ type: DEDUCTION_TYPES[0], description:'', amount: 0 });
@@ -869,6 +897,7 @@ function refreshDrawerTotals(empId){
 }
 function updateDeductionItem(empId, idx, field, value){
   const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)){ openDrawer(empId); return; }
   const emp = c.employees.find(e => e.id === empId);
   emp.deductionItems[idx][field] = field === 'amount' ? (parseFloat(value)||0) : value;
   if(field === 'amount'){
@@ -885,6 +914,7 @@ function updateDeductionItem(empId, idx, field, value){
 }
 function removeDeductionItem(empId, idx){
   const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)) return;
   const emp = c.employees.find(e => e.id === empId);
   emp.deductionItems.splice(idx, 1);
   saveDeductionItems(empId, emp.deductionItems);
@@ -1568,7 +1598,8 @@ async function finalizePayrollRun(evt){
   const c = state.clients[state.activeClient];
   if(!requireAccess(c)) return;
   if(!c.period){ alert('Set a pay period first (top of the page) before finalizing.'); return; }
-  if(!confirm(`Finalize payroll for "${c.name || 'this client'}" — ${c.period}?\n\nThis permanently records each employee's pay for this period, which future dashboard features (trend charts, salary history) will be built on. Finalizing the same period again later just updates that period's record rather than duplicating it — safe to re-run if you correct something.`)) return;
+  if(blockIfClosed(c)) return;
+  if(!confirm(`Finalize payroll for "${c.name || 'this client'}" — ${c.period}?\n\nThis permanently records each employee's pay for this period, which future dashboard features (trend charts, salary history) will be built on. Finalizing the same period again later just updates that period's record rather than duplicating it — safe to re-run if you correct something, right up until you close the period.`)) return;
 
   const btn = evt.target;
   const originalText = btn.textContent;
@@ -1602,10 +1633,55 @@ async function finalizePayrollRun(evt){
   });
 
   const { error } = await sb.from('payroll_runs').upsert(rows, { onConflict: 'employee_id,period' });
+  if(error){ btn.textContent = originalText; btn.disabled = false; alert('Could not finalize: ' + error.message); return; }
+
+  const periodTotals = rows.reduce((acc,r) => {
+    acc.gross += r.gross; acc.net += r.net_pay; acc.paye += r.paye;
+    return acc;
+  }, { gross:0, net:0, paye:0 });
+
+  const { data: periodData, error: periodError } = await sb.from('payroll_periods').upsert({
+    company_id: state.activeClient, period: c.period, status: 'Processed',
+    employee_count: rows.length, total_gross: periodTotals.gross, total_net: periodTotals.net, total_paye: periodTotals.paye
+  }, { onConflict: 'company_id,period' }).select().single();
+
   btn.textContent = originalText; btn.disabled = false;
-  if(error){ alert('Could not finalize: ' + error.message); return; }
+  if(periodError){ alert('Payroll data was saved, but the period status could not be updated: ' + periodError.message); return; }
+
+  const existing = getPeriodRecord(c, c.period);
+  const rec = { id: periodData.id, period: c.period, status: 'Processed', employeeCount: rows.length,
+                totalGross: periodTotals.gross, totalNet: periodTotals.net, totalPaye: periodTotals.paye,
+                closedBy: '', closedAt: null };
+  if(existing) Object.assign(existing, rec); else c.payrollPeriods.push(rec);
+
   logAudit('Payroll finalized', `${c.period} — ${rows.length} employee record(s)`);
-  alert(`Payroll finalized for ${c.period}. ${rows.length} employee record(s) saved to history.`);
+  render();
+  alert(`Payroll finalized for ${c.period}. ${rows.length} employee record(s) saved to history. You can close this period once you're satisfied it's correct — closing is permanent.`);
+}
+
+async function closePeriod(){
+  const c = state.clients[state.activeClient];
+  if(!c.period){ return; }
+  const record = getPeriodRecord(c, c.period);
+  if(!record || record.status !== 'Processed'){
+    alert('Finalize this period first — a period can only be closed after payroll has been finalized for it.');
+    return;
+  }
+  const typed = prompt(`Closing ${c.period} is PERMANENT. Once closed, nothing about this period — salaries, deductions, payslips, totals — can ever be edited or deleted again through this app, by you or anyone else with access to this client.\n\nType the period exactly (${c.period}) to confirm:`);
+  if(typed === null) return;
+  if(typed.trim() !== c.period){
+    alert('That did not match. Nothing was closed.');
+    return;
+  }
+  const { data: userData } = await sb.auth.getUser();
+  const { data, error } = await sb.from('payroll_periods').update({
+    status: 'Closed', closed_by: userData?.user?.email || '', closed_at: new Date().toISOString()
+  }).eq('id', record.id).select().single();
+  if(error){ alert('Could not close period: ' + error.message); return; }
+  record.status = 'Closed'; record.closedBy = data.closed_by; record.closedAt = data.closed_at;
+  logAudit('Payroll period closed', `${c.period} — permanently locked (${record.employeeCount} employees, net pay ${fmt(record.totalNet)})`);
+  render();
+  alert(`${c.period} is now closed and permanently read-only.`);
 }
 
 async function downloadAllPayslipsZip(evt){
@@ -1851,7 +1927,7 @@ function renderMain(){
     return acc;
   }, {gross:0,nssf:0,shif:0,ahl:0,paye:0,net:0,employerCost:0,otherDeduct:0});
   const totalDeductions = totals.nssf + totals.shif + totals.ahl + totals.paye + totals.otherDeduct;
-  const activeEmployees = c.employees.filter(e => e.employmentStatus !== 'Terminated').length;
+  const activeEmployees = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
 
   // Composition bar: each segment as a % of gross pay, so the bar always sums to 100% of what
   // was actually earned this period — built entirely from real totals above, nothing hard-coded.
@@ -1873,6 +1949,12 @@ function renderMain(){
         <input type="month" value="${c.period || ''}" onchange="updateClientField('period', this.value)" />
       </div>
     </div>
+
+    ${isPeriodClosed(c, c.period) ? `
+      <div style="background:rgba(199,123,110,0.12);border:1px solid rgba(199,123,110,0.4);border-radius:6px;padding:12px 16px;margin-bottom:18px;font-size:13px;color:#C77B6E;">
+        🔒 <strong>${c.period} is closed and read-only.</strong> Salaries, deductions, and employees cannot be changed while this period is selected. Switch to an open period above to make edits.
+      </div>
+    ` : ''}
 
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
       ${c.isPaid
@@ -1988,9 +2070,34 @@ function renderMain(){
       <button class="add-row-btn" onclick="addEmployeeRow()">+ Add employee</button>
     </div>
 
-    <div class="actions">
-      <button class="btn primary" style="background:linear-gradient(135deg, var(--gold), #D9B876);" onclick="finalizePayrollRun(event)">Finalize payroll for ${c.period || 'this period'}</button>
-    </div>
+    ${(() => {
+      const periodRecord = c.period ? getPeriodRecord(c, c.period) : null;
+      const status = periodRecord ? periodRecord.status : null;
+      if(status === 'Closed'){
+        return `
+          <div class="actions">
+            <span style="font-size:12.5px;background:rgba(199,123,110,0.18);color:#C77B6E;padding:8px 14px;border-radius:5px;font-weight:600;">
+              🔒 ${c.period} is CLOSED — permanently locked. Closed by ${esc(periodRecord.closedBy)} on ${periodRecord.closedAt ? new Date(periodRecord.closedAt).toLocaleDateString('en-KE') : ''}.
+            </span>
+          </div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:-12px;margin-bottom:20px;">Switch to a different pay period above to make changes. This period's figures cannot be edited, re-finalized, or deleted by anyone, through any part of this app.</div>
+        `;
+      }
+      if(status === 'Processed'){
+        return `
+          <div class="actions">
+            <button class="btn primary" style="background:linear-gradient(135deg, var(--gold), #D9B876);" onclick="finalizePayrollRun(event)">Re-finalize ${c.period}</button>
+            <button class="btn" style="border-color:#C77B6E;color:#C77B6E;" onclick="closePeriod()">Close ${c.period} permanently</button>
+          </div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:-12px;margin-bottom:20px;">Finalized, not yet closed — you can still correct and re-finalize. Once you close it, no further changes are possible.</div>
+        `;
+      }
+      return `
+        <div class="actions">
+          <button class="btn primary" style="background:linear-gradient(135deg, var(--gold), #D9B876);" onclick="finalizePayrollRun(event)">Finalize payroll for ${c.period || 'this period'}</button>
+        </div>
+      `;
+    })()}
 
     <div class="actions">
       <button class="btn primary" onclick="exportCSV()">Export payroll register (CSV)</button>
