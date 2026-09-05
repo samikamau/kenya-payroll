@@ -324,7 +324,7 @@ const EMP_DB_FIELD = { name:'name', pin:'pin', idNumber:'id_number', nssfNo:'nss
                         payrollNumber:'payroll_number', phone:'phone', email:'email', residentialStatus:'residential_status',
                         employeeType:'employee_type', disability:'disability', exemptionCertNo:'exemption_cert_no',
                         benefitDescription:'benefit_description', benefitAmount:'benefit_amount', identityType:'identity_type',
-                        department:'department', employmentStatus:'employment_status' };
+                        department:'department', employmentStatus:'employment_status', annualLeaveEntitlement:'annual_leave_entitlement' };
 const CLIENT_DB_FIELD = { name:'name', period:'period', kraPin:'kra_pin', nssfEmployerNo:'nssf_employer_no', shaEmployerNo:'sha_employer_no',
                            brandColor:'brand_color', logoDataUrl:'logo_data_url', logoSize:'logo_size', logoAspect:'logo_aspect',
                            isPaid:'is_paid', trialPeriodUsed:'trial_period_used' };
@@ -443,19 +443,26 @@ async function fetchAllData(){
   state.clients = {};
   for(const c of companies){
     const { data: employees } = await sb.from('employees').select('*').eq('company_id', c.id).order('created_at');
+    const { data: leaveRequests } = await sb.from('leave_requests').select('*').eq('company_id', c.id).order('start_date', { ascending: false });
     state.clients[c.id] = {
       name: c.name, period: c.period, kraPin: c.kra_pin,
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
       brandColor: c.brand_color || '#B08D57', logoDataUrl: c.logo_data_url || '',
       logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
       isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null,
+      view: 'payroll',
+      leaveRequests: (leaveRequests||[]).map(l => ({
+        id: l.id, employeeId: l.employee_id, leaveType: l.leave_type, startDate: l.start_date, endDate: l.end_date,
+        days: l.days, status: l.status, notes: l.notes||''
+      })),
       employees: (employees||[]).map(e => ({
         id: e.id, name: e.name, pin: e.pin, idNumber: e.id_number, nssfNo: e.nssf_no, shaNo: e.sha_no,
         basic: e.basic, allowances: e.allowances, pension: e.pension, insurance: e.insurance, deductionItems: e.deduction_items || [],
         payrollNumber: e.payroll_number||'', phone: e.phone||'', email: e.email||'', residentialStatus: e.residential_status||'Resident',
         employeeType: e.employee_type||'Primary Employee', disability: e.disability||'No', exemptionCertNo: e.exemption_cert_no||'',
         benefitDescription: e.benefit_description||'Benefit not given', benefitAmount: e.benefit_amount||0, identityType: e.identity_type||'National ID',
-        department: e.department||'', employmentStatus: e.employment_status||'Active'
+        department: e.department||'', employmentStatus: e.employment_status||'Active',
+        annualLeaveEntitlement: e.annual_leave_entitlement ?? 21
       }))
     };
   }
@@ -538,7 +545,7 @@ async function addClient(){
   if(error){ alert(error.message); return; }
   state.clients[data.id] = { name: data.name, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'',
                               brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
-                              isPaid:false, trialPeriodUsed:null, employees: [] };
+                              isPaid:false, trialPeriodUsed:null, view:'payroll', leaveRequests:[], employees: [] };
   state.activeClient = data.id;
   await addEmployeeRow();
 }
@@ -652,7 +659,7 @@ async function addEmployeeRow(){
     basic:0, allowances:0, pension:0, insurance:0, deductionItems:[],
     payrollNumber:'', phone:'', email:'', residentialStatus:'Resident', employeeType:'Primary Employee',
     disability:'No', exemptionCertNo:'', benefitDescription:'Benefit not given', benefitAmount:0, identityType:'National ID',
-    department:'', employmentStatus:'Active'
+    department:'', employmentStatus:'Active', annualLeaveEntitlement:21
   });
   render();
 }
@@ -919,6 +926,7 @@ function openDrawer(empId){
       <h3>Filing details</h3>
       <div class="settings-grid" style="grid-template-columns:1fr 1fr;">
         <div class="settings-field"><label>Department</label><input value="${esc(emp.department)}" placeholder="e.g. Finance" onchange="updateEmployeeField('${emp.id}','department',this.value); openDrawer('${emp.id}')"/></div>
+        <div class="settings-field"><label>Annual leave entitlement (days)</label><input type="number" value="${emp.annualLeaveEntitlement ?? 21}" onchange="updateEmployeeField('${emp.id}','annualLeaveEntitlement',this.value); openDrawer('${emp.id}')"/></div>
         <div class="settings-field"><label>Employment status</label>
           <select onchange="updateEmployeeField('${emp.id}','employmentStatus',this.value); openDrawer('${emp.id}')" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
             <option ${emp.employmentStatus==='Active'?'selected':''}>Active</option>
@@ -1298,6 +1306,73 @@ function exportPayrollRegisterPDF(){
   doc.save(`${(c.name||'payroll').replace(/\s+/g,'_')}_payroll_register_${c.period||''}.pdf`);
 }
 
+/* ---------------- Leave management ---------------- */
+const LEAVE_TYPES = ['Annual Leave','Sick Leave','Maternity Leave','Paternity Leave','Compassionate Leave','Unpaid Leave','Other'];
+
+function switchView(view){
+  const c = state.clients[state.activeClient];
+  if(!c) return;
+  c.view = view;
+  render();
+}
+
+function daysBetween(startDate, endDate){
+  const start = new Date(startDate), end = new Date(endDate);
+  if(isNaN(start) || isNaN(end) || end < start) return 0;
+  return Math.round((end - start) / 86400000) + 1; // inclusive of both start and end dates
+}
+
+function leaveSummaryForEmployee(c, empId){
+  const requests = c.leaveRequests.filter(l => l.employeeId === empId);
+  const taken = requests.filter(l => l.status === 'Approved').reduce((s,l) => s + Number(l.days||0), 0);
+  const pending = requests.filter(l => l.status === 'Pending').reduce((s,l) => s + Number(l.days||0), 0);
+  const emp = c.employees.find(e => e.id === empId);
+  const entitlement = emp ? Number(emp.annualLeaveEntitlement ?? 21) : 21;
+  return { entitlement, taken, pending, remaining: entitlement - taken };
+}
+
+async function submitLeaveRequest(evt){
+  evt.preventDefault();
+  const c = state.clients[state.activeClient];
+  const form = evt.target;
+  const employeeId = form.employeeId.value;
+  const leaveType = form.leaveType.value;
+  const startDate = form.startDate.value;
+  const endDate = form.endDate.value;
+  const notes = form.notes.value.trim();
+  if(!employeeId || !startDate || !endDate){ alert('Pick an employee, start date, and end date.'); return; }
+  const days = daysBetween(startDate, endDate);
+  if(days <= 0){ alert('End date must be on or after the start date.'); return; }
+
+  const { data, error } = await sb.from('leave_requests').insert({
+    company_id: state.activeClient, employee_id: employeeId, leave_type: leaveType,
+    start_date: startDate, end_date: endDate, days, status: 'Pending', notes
+  }).select().single();
+  if(error){ alert('Could not submit leave request: ' + error.message); return; }
+
+  c.leaveRequests.unshift({ id: data.id, employeeId, leaveType, startDate, endDate, days, status: 'Pending', notes });
+  render();
+}
+
+async function decideLeaveRequest(requestId, newStatus){
+  const c = state.clients[state.activeClient];
+  const req = c.leaveRequests.find(l => l.id === requestId);
+  if(!req) return;
+  const { error } = await sb.from('leave_requests').update({ status: newStatus, decided_at: new Date().toISOString() }).eq('id', requestId);
+  if(error){ alert('Could not update request: ' + error.message); return; }
+  req.status = newStatus;
+  render();
+}
+
+async function deleteLeaveRequest(requestId){
+  if(!confirm('Delete this leave request? This cannot be undone.')) return;
+  const c = state.clients[state.activeClient];
+  const { error } = await sb.from('leave_requests').delete().eq('id', requestId);
+  if(error){ alert('Could not delete: ' + error.message); return; }
+  c.leaveRequests = c.leaveRequests.filter(l => l.id !== requestId);
+  render();
+}
+
 async function finalizePayrollRun(evt){
   const c = state.clients[state.activeClient];
   if(!requireAccess(c)) return;
@@ -1395,10 +1470,145 @@ function renderRail(){
   `;
 }
 
+function viewTabsHtml(c){
+  return `
+    <div style="display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--line);">
+      <button onclick="switchView('payroll')" style="padding:10px 18px;background:none;border:none;border-bottom:2px solid ${c.view!=='leave'?'var(--gold)':'transparent'};color:${c.view!=='leave'?'var(--ink)':'var(--muted)'};font-family:'Inter',sans-serif;font-size:13px;font-weight:${c.view!=='leave'?'600':'400'};cursor:pointer;">Payroll</button>
+      <button onclick="switchView('leave')" style="padding:10px 18px;background:none;border:none;border-bottom:2px solid ${c.view==='leave'?'var(--gold)':'transparent'};color:${c.view==='leave'?'var(--ink)':'var(--muted)'};font-family:'Inter',sans-serif;font-size:13px;font-weight:${c.view==='leave'?'600':'400'};cursor:pointer;">Leave Management</button>
+    </div>
+  `;
+}
+
+let leaveFilter = { employeeId:'', status:'', type:'' };
+
+function renderLeaveView(main, c){
+  const summaries = c.employees.map(e => ({ e, s: leaveSummaryForEmployee(c, e.id) }));
+  const totalEntitlement = summaries.reduce((s,x) => s + x.s.entitlement, 0);
+  const totalTaken = summaries.reduce((s,x) => s + x.s.taken, 0);
+  const totalRemaining = summaries.reduce((s,x) => s + x.s.remaining, 0);
+  const pendingCount = c.leaveRequests.filter(l => l.status === 'Pending').length;
+  const utilizationPct = totalEntitlement > 0 ? (totalTaken / totalEntitlement * 100) : 0;
+
+  const filteredRequests = c.leaveRequests.filter(l => {
+    if(leaveFilter.employeeId && l.employeeId !== leaveFilter.employeeId) return false;
+    if(leaveFilter.status && l.status !== leaveFilter.status) return false;
+    if(leaveFilter.type && l.leaveType !== leaveFilter.type) return false;
+    return true;
+  });
+
+  main.innerHTML = `
+    ${viewTabsHtml(c)}
+    <div class="topbar">
+      <h2 style="font-family:'Fraunces',serif;font-weight:500;font-size:24px;margin:0;">${esc(c.name) || 'Client'} — Leave Management</h2>
+    </div>
+
+    <div class="summary">
+      <div class="card"><div class="label">Total entitlement (days)</div><div class="value">${fmt(totalEntitlement)}</div></div>
+      <div class="card deduct"><div class="label">Total taken (approved)</div><div class="value">${fmt(totalTaken)}</div></div>
+      <div class="card accent"><div class="label">Total remaining</div><div class="value">${fmt(totalRemaining)}</div></div>
+      <div class="card"><div class="label">Pending requests</div><div class="value">${pendingCount}</div></div>
+    </div>
+
+    ${totalEntitlement > 0 ? `
+    <div class="composition-wrap">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">LEAVE UTILIZATION — ${utilizationPct.toFixed(1)}% of total entitlement used</div>
+      <div class="composition-bar">
+        <div style="width:${Math.min(utilizationPct,100).toFixed(2)}%;background:var(--gold);" title="Taken: ${fmt(totalTaken)} days (${utilizationPct.toFixed(1)}%)"></div>
+        <div style="width:${Math.max(0,100-utilizationPct).toFixed(2)}%;background:var(--panel-2);" title="Remaining: ${fmt(totalRemaining)} days"></div>
+      </div>
+    </div>` : ''}
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Employee</th><th>Entitlement</th><th>Taken</th><th>Remaining</th><th>Pending</th></tr></thead>
+        <tbody>
+          ${summaries.map(({e,s}) => `
+            <tr onclick="leaveFilter.employeeId = leaveFilter.employeeId === '${e.id}' ? '' : '${e.id}'; render();" style="cursor:pointer; ${leaveFilter.employeeId===e.id ? 'background:rgba(176,141,87,0.08);' : ''}">
+              <td class="name-cell">${esc(e.name) || 'Unnamed'}</td>
+              <td class="num">${fmt(s.entitlement)}</td>
+              <td class="num">${fmt(s.taken)}</td>
+              <td class="num" style="color:${s.remaining<0?'#C77B6E':'var(--gold)'};">${fmt(s.remaining)}</td>
+              <td class="num">${fmt(s.pending)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="settings-panel">
+      <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:12px;">New leave request</h3>
+      <form onsubmit="submitLeaveRequest(event)">
+        <div class="settings-grid">
+          <div class="settings-field"><label>Employee</label>
+            <select name="employeeId" required style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
+              <option value="">Select employee</option>
+              ${c.employees.map(e => `<option value="${e.id}">${esc(e.name) || 'Unnamed'}</option>`).join('')}
+            </select>
+          </div>
+          <div class="settings-field"><label>Leave type</label>
+            <select name="leaveType" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
+              ${LEAVE_TYPES.map(t => `<option>${t}</option>`).join('')}
+            </select>
+          </div>
+          <div class="settings-field"><label>Start date</label><input type="date" name="startDate" required/></div>
+          <div class="settings-field"><label>End date</label><input type="date" name="endDate" required/></div>
+          <div class="settings-field" style="grid-column:1 / -1;"><label>Notes (optional)</label><input name="notes" placeholder="e.g. Family event"/></div>
+        </div>
+        <button class="btn primary" type="submit" style="margin-top:12px;">Submit request</button>
+      </form>
+    </div>
+
+    <div class="table-wrap" style="margin-top:20px;">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <select onchange="leaveFilter.status=this.value; render();" style="background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;">
+          <option value="">All statuses</option>
+          <option ${leaveFilter.status==='Pending'?'selected':''}>Pending</option>
+          <option ${leaveFilter.status==='Approved'?'selected':''}>Approved</option>
+          <option ${leaveFilter.status==='Rejected'?'selected':''}>Rejected</option>
+        </select>
+        <select onchange="leaveFilter.type=this.value; render();" style="background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;">
+          <option value="">All leave types</option>
+          ${LEAVE_TYPES.map(t => `<option ${leaveFilter.type===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+        ${leaveFilter.employeeId ? `<span style="font-size:12px;color:var(--muted);">Filtered to one employee &mdash; <a style="color:var(--gold);cursor:pointer;" onclick="leaveFilter.employeeId=''; render();">clear</a></span>` : ''}
+      </div>
+      <table>
+        <thead><tr><th>Employee</th><th>Type</th><th>Start</th><th>End</th><th>Days</th><th>Status</th><th>Notes</th><th></th></tr></thead>
+        <tbody>
+          ${filteredRequests.length === 0 ? `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px;">No leave requests match this filter.</td></tr>` : ''}
+          ${filteredRequests.map(l => {
+            const emp = c.employees.find(e => e.id === l.employeeId);
+            const statusColor = l.status === 'Approved' ? 'var(--gold)' : l.status === 'Rejected' ? '#C77B6E' : 'var(--muted)';
+            return `
+            <tr>
+              <td class="name-cell">${esc(emp ? emp.name : 'Unknown')}</td>
+              <td>${esc(l.leaveType)}</td>
+              <td class="mono">${l.startDate}</td>
+              <td class="mono">${l.endDate}</td>
+              <td class="num">${fmt(l.days)}</td>
+              <td style="color:${statusColor};font-weight:600;">${l.status}</td>
+              <td style="color:var(--muted);font-size:12px;">${esc(l.notes)}</td>
+              <td style="white-space:nowrap;">
+                ${l.status === 'Pending' ? `
+                  <span style="color:var(--gold);cursor:pointer;font-size:12px;margin-right:8px;" onclick="decideLeaveRequest('${l.id}','Approved')">Approve</span>
+                  <span style="color:#C77B6E;cursor:pointer;font-size:12px;margin-right:8px;" onclick="decideLeaveRequest('${l.id}','Rejected')">Reject</span>
+                ` : ''}
+                <span class="row-del" style="opacity:.6;" onclick="deleteLeaveRequest('${l.id}')">&times;</span>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderMain(){
   const main = document.getElementById('mainArea');
   const c = state.clients[state.activeClient];
   if(!c){ main.innerHTML = `<div class="empty-state"><h2>No client selected</h2></div>`; return; }
+
+  if(c.view === 'leave'){ renderLeaveView(main, c); return; }
 
   const results = c.employees.map(e => ({ e, r: calcEmployee(e) }));
   const totals = results.reduce((acc, {r}) => {
@@ -1422,6 +1632,7 @@ function renderMain(){
   ].filter(s => s.value > 0) : [];
 
   main.innerHTML = `
+    ${viewTabsHtml(c)}
     <div class="topbar">
       <input class="company-name-input" value="${esc(c.name)}" placeholder="Client name"
         oninput="updateClientField('name', this.value)" />
