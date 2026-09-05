@@ -424,7 +424,7 @@ const EMP_DB_FIELD = { name:'name', pin:'pin', idNumber:'id_number', nssfNo:'nss
                         employeeType:'employee_type', disability:'disability', exemptionCertNo:'exemption_cert_no',
                         benefitDescription:'benefit_description', benefitAmount:'benefit_amount', identityType:'identity_type',
                         department:'department', employmentStatus:'employment_status', annualLeaveEntitlement:'annual_leave_entitlement',
-                        overtimePay:'overtime_pay' };
+                        overtimePay:'overtime_pay', bonusItems:'bonus_items' };
 const CLIENT_DB_FIELD = { name:'name', period:'period', kraPin:'kra_pin', nssfEmployerNo:'nssf_employer_no', shaEmployerNo:'sha_employer_no',
                            brandColor:'brand_color', logoDataUrl:'logo_data_url', logoSize:'logo_size', logoAspect:'logo_aspect',
                            isPaid:'is_paid', trialPeriodUsed:'trial_period_used' };
@@ -436,6 +436,8 @@ function hexToRgb(hex){
 }
 
 const DEDUCTION_TYPES = ['Salary Advance','Loan Repayment','Damaged Asset/Equipment','Union Dues','Other'];
+const BONUS_TYPES = ['Bonus','Commission','Arrears','One-off Payment','Other'];
+function isRecurring(item){ return item.recurring !== false; } // undefined/true = recurring (matches existing pre-flag data unchanged)
 
 function sumDeductions(items){
   return (items||[]).reduce((s,d) => s + (parseFloat(d.amount)||0), 0);
@@ -460,11 +462,15 @@ function calcPAYE(taxable){
   return tax;
 }
 
+function sumBonuses(items){
+  return (items||[]).reduce((s,d) => s + (parseFloat(d.amount)||0), 0);
+}
 function calcEmployee(e){
   const basic = Number(e.basic)||0;
   const allowances = Number(e.allowances)||0;
   const overtimePay = Number(e.overtimePay)||0;
-  const gross = basic + allowances + overtimePay; // overtime is taxable cash pay, but NOT part of the NSSF pensionable base (basic only, below)
+  const bonusPay = sumBonuses(e.bonusItems);
+  const gross = basic + allowances + overtimePay + bonusPay; // one-off bonuses are taxable cash pay, like overtime, but NOT part of the NSSF pensionable base (basic only, below)
 
   const tier1 = Math.min(basic, RATES.nssfLEL) * RATES.nssfRate;
   const tier2 = Math.max(0, Math.min(basic, RATES.nssfUEL) - RATES.nssfLEL) * RATES.nssfRate;
@@ -489,7 +495,7 @@ function calcEmployee(e){
   const nita = gross > 0 ? RATES.nitaLevy : 0;
   const employerCost = gross + nssfEmployer + ahlEmployer + nita;
 
-  return { gross, overtimePay, nssfEmployee, nssfEmployer, shif, ahlEmployee, ahlEmployer,
+  return { gross, overtimePay, bonusPay, nssfEmployee, nssfEmployer, shif, ahlEmployee, ahlEmployer,
            voluntaryPension, taxable, grossTax, insuranceRelief, paye,
            otherDeduct, totalDeductions, net, nita, employerCost };
 }
@@ -602,7 +608,8 @@ async function fetchAllData(){
         employeeType: e.employee_type||'Primary Employee', disability: e.disability||'No', exemptionCertNo: e.exemption_cert_no||'',
         benefitDescription: e.benefit_description||'Benefit not given', benefitAmount: e.benefit_amount||0, identityType: e.identity_type||'National ID',
         department: e.department||'', employmentStatus: e.employment_status||'Active',
-        annualLeaveEntitlement: e.annual_leave_entitlement ?? 21, overtimePay: e.overtime_pay || 0
+        annualLeaveEntitlement: e.annual_leave_entitlement ?? 21, overtimePay: e.overtime_pay || 0,
+        bonusItems: e.bonus_items || []
       }))
     };
   }
@@ -862,7 +869,7 @@ async function addEmployeeRow(){
     basic:0, allowances:0, pension:0, insurance:0, deductionItems:[],
     payrollNumber:'', phone:'', email:'', residentialStatus:'Resident', employeeType:'Primary Employee',
     disability:'No', exemptionCertNo:'', benefitDescription:'Benefit not given', benefitAmount:0, identityType:'National ID',
-    department:'', employmentStatus:'Active', annualLeaveEntitlement:21, overtimePay:0
+    department:'', employmentStatus:'Active', annualLeaveEntitlement:21, overtimePay:0, bonusItems:[]
   });
   showAllEmployees = true; // so the newly added row is immediately visible, not hidden past the current page limit
   render();
@@ -908,7 +915,7 @@ function addDeductionItem(empId){
   if(blockIfClosed(c)) return;
   const emp = c.employees.find(e => e.id === empId);
   if(!emp.deductionItems) emp.deductionItems = [];
-  emp.deductionItems.push({ type: DEDUCTION_TYPES[0], description:'', amount: 0 });
+  emp.deductionItems.push({ type: DEDUCTION_TYPES[0], description:'', amount: 0, recurring: true });
   saveDeductionItems(empId, emp.deductionItems);
   openDrawer(empId);
 }
@@ -919,6 +926,8 @@ function refreshDrawerTotals(empId){
   const r = calcEmployee(emp);
   const totalEl = document.getElementById('drawerOtherDeductTotal');
   if(totalEl) totalEl.textContent = fmt(r.otherDeduct);
+  const bonusEl = document.getElementById('drawerBonusTotal');
+  if(bonusEl) bonusEl.textContent = fmt(r.bonusPay);
   const netEl = document.getElementById('drawerNetPay');
   if(netEl) netEl.textContent = 'KES ' + fmt(r.net);
 }
@@ -926,15 +935,15 @@ function updateDeductionItem(empId, idx, field, value){
   const c = state.clients[state.activeClient];
   if(blockIfClosed(c)){ openDrawer(empId); return; }
   const emp = c.employees.find(e => e.id === empId);
-  emp.deductionItems[idx][field] = field === 'amount' ? (parseFloat(value)||0) : value;
+  emp.deductionItems[idx][field] = (field === 'amount') ? (parseFloat(value)||0) : (field === 'recurring' ? value : value);
   if(field === 'amount'){
     saveDeductionItemsDebounced(empId, emp.deductionItems);
   } else {
     saveDeductionItems(empId, emp.deductionItems);
   }
   render(); // safe: only touches the main table/rail, never the open drawer, so focus is never lost
-  if(field === 'type'){
-    openDrawer(empId); // dropdown selection isn't continuous typing, a full refresh here is fine
+  if(field === 'type' || field === 'recurring'){
+    openDrawer(empId); // not continuous typing, a full refresh here is fine
   } else {
     refreshDrawerTotals(empId); // patches just the total + net pay figures live, without rebuilding inputs mid-keystroke
   }
@@ -945,6 +954,52 @@ function removeDeductionItem(empId, idx){
   const emp = c.employees.find(e => e.id === empId);
   emp.deductionItems.splice(idx, 1);
   saveDeductionItems(empId, emp.deductionItems);
+  render();
+  openDrawer(empId);
+}
+
+/* ---------------- One-off pay items (bonus, commission, etc.) — mirrors deduction items above ---------------- */
+const _bonusSaveTimers = {};
+async function saveBonusItems(empId, items){
+  const { error } = await sb.from('employees').update({ bonus_items: items }).eq('id', empId);
+  if(error) console.error(error);
+}
+function saveBonusItemsDebounced(empId, items){
+  clearTimeout(_bonusSaveTimers[empId]);
+  _bonusSaveTimers[empId] = setTimeout(() => saveBonusItems(empId, items), 500);
+}
+function addBonusItem(empId){
+  const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)) return;
+  const emp = c.employees.find(e => e.id === empId);
+  if(!emp.bonusItems) emp.bonusItems = [];
+  emp.bonusItems.push({ type: BONUS_TYPES[0], description:'', amount: 0, recurring: false }); // one-off pay defaults to NOT recurring — the common case
+  saveBonusItems(empId, emp.bonusItems);
+  openDrawer(empId);
+}
+function updateBonusItem(empId, idx, field, value){
+  const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)){ openDrawer(empId); return; }
+  const emp = c.employees.find(e => e.id === empId);
+  emp.bonusItems[idx][field] = (field === 'amount') ? (parseFloat(value)||0) : value;
+  if(field === 'amount'){
+    saveBonusItemsDebounced(empId, emp.bonusItems);
+  } else {
+    saveBonusItems(empId, emp.bonusItems);
+  }
+  render();
+  if(field === 'type' || field === 'recurring'){
+    openDrawer(empId);
+  } else {
+    refreshDrawerTotals(empId);
+  }
+}
+function removeBonusItem(empId, idx){
+  const c = state.clients[state.activeClient];
+  if(blockIfClosed(c)) return;
+  const emp = c.employees.find(e => e.id === empId);
+  emp.bonusItems.splice(idx, 1);
+  saveBonusItems(empId, emp.bonusItems);
   render();
   openDrawer(empId);
 }
@@ -1025,6 +1080,9 @@ function generatePayslipPDF(empId){
   line('Basic salary', fmt(emp.basic));
   line('Allowances', fmt(emp.allowances));
   if(emp.overtimePay) line('Overtime pay', fmt(emp.overtimePay));
+  (emp.bonusItems||[]).forEach(b => {
+    if(b.amount) line(b.description ? `${b.type}: ${b.description}` : b.type, fmt(b.amount));
+  });
   line('Gross pay', fmt(r.gross), { bold:true });
 
   section('Statutory deductions');
@@ -1231,15 +1289,38 @@ function openDrawer(empId){
     </div>
 
     <div class="payslip-section">
+      <h3>One-off pay <span style="font-weight:400;color:var(--muted);font-size:11px;">(bonus, commission — cleared automatically after this period is finalized, unless marked recurring)</span></h3>
+      ${(emp.bonusItems||[]).length === 0 ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">None on file for this pay period.</div>` : ''}
+      ${(emp.bonusItems||[]).map((d, idx) => `
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+          <select onchange="updateBonusItem('${emp.id}', ${idx}, 'type', this.value)" style="flex:1;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 6px;font-size:12px;">
+            ${BONUS_TYPES.map(t => `<option ${d.type===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+          <input type="number" value="${d.amount||''}" placeholder="0" oninput="updateBonusItem('${emp.id}', ${idx}, 'amount', this.value)" style="width:75px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;"/>
+          <input value="${esc(d.description)}" placeholder="Note (optional)" onchange="updateBonusItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.2;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
+          <label style="display:flex;align-items:center;gap:3px;font-size:10.5px;color:var(--muted);white-space:nowrap;" title="If checked, this keeps appearing every period instead of being cleared after finalizing">
+            <input type="checkbox" ${isRecurring(d)?'checked':''} onchange="updateBonusItem('${emp.id}', ${idx}, 'recurring', this.checked)" style="width:13px;height:13px;accent-color:var(--gold);" />Recurring
+          </label>
+          <span class="row-del" style="opacity:.6;" onclick="removeBonusItem('${emp.id}', ${idx})">&times;</span>
+        </div>
+      `).join('')}
+      <button class="add-row-btn" style="padding:6px 2px;" onclick="addBonusItem('${emp.id}')">+ Add one-off pay</button>
+      ${(emp.bonusItems||[]).length > 0 ? `<div class="payslip-line total" style="margin-top:8px;"><span>Total one-off pay</span><span id="drawerBonusTotal">${fmt(r.bonusPay)}</span></div>` : ''}
+    </div>
+
+    <div class="payslip-section">
       <h3>Other deductions</h3>
       ${(emp.deductionItems||[]).length === 0 ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">None on file for this pay period.</div>` : ''}
       ${(emp.deductionItems||[]).map((d, idx) => `
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
-          <select onchange="updateDeductionItem('${emp.id}', ${idx}, 'type', this.value)" style="flex:1.2;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 6px;font-size:12px;">
+          <select onchange="updateDeductionItem('${emp.id}', ${idx}, 'type', this.value)" style="flex:1;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 6px;font-size:12px;">
             ${DEDUCTION_TYPES.map(t => `<option ${d.type===t?'selected':''}>${t}</option>`).join('')}
           </select>
-          <input type="number" value="${d.amount||''}" placeholder="0" oninput="updateDeductionItem('${emp.id}', ${idx}, 'amount', this.value)" style="width:80px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;"/>
-          <input value="${esc(d.description)}" placeholder="Note (optional)" onchange="updateDeductionItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.4;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
+          <input type="number" value="${d.amount||''}" placeholder="0" oninput="updateDeductionItem('${emp.id}', ${idx}, 'amount', this.value)" style="width:75px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;"/>
+          <input value="${esc(d.description)}" placeholder="Note (optional)" onchange="updateDeductionItem('${emp.id}', ${idx}, 'description', this.value)" style="flex:1.2;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12px;"/>
+          <label style="display:flex;align-items:center;gap:3px;font-size:10.5px;color:var(--muted);white-space:nowrap;" title="If unchecked, this is cleared automatically after finalizing this period">
+            <input type="checkbox" ${isRecurring(d)?'checked':''} onchange="updateDeductionItem('${emp.id}', ${idx}, 'recurring', this.checked)" style="width:13px;height:13px;accent-color:var(--gold);" />Recurring
+          </label>
           <span class="row-del" style="opacity:.6;" onclick="removeDeductionItem('${emp.id}', ${idx})">&times;</span>
         </div>
       `).join('')}
@@ -1644,6 +1725,7 @@ async function finalizePayrollRun(evt){
       basic: e.basic || 0,
       allowances: e.allowances || 0,
       overtime_pay: e.overtimePay || 0,
+      bonus_pay: r.bonusPay,
       gross: r.gross,
       nssf_employee: r.nssfEmployee,
       nssf_employer: r.nssfEmployer,
@@ -1681,9 +1763,27 @@ async function finalizePayrollRun(evt){
                 closedBy: '', closedAt: null };
   if(existing) Object.assign(existing, rec); else c.payrollPeriods.push(rec);
 
-  logAudit('Payroll finalized', `${c.period} — ${rows.length} employee record(s)`);
+  // Roll-over: one-off pay/deduction items (not marked "Recurring") are now locked into this
+  // period's history via the snapshot above — clear them from the live employee record so they
+  // don't silently reappear next period. Recurring items are left untouched; that's what makes
+  // next period a review-and-amend process instead of re-entering everything from scratch.
+  let clearedCount = 0;
+  for(const e of c.employees){
+    const keptDeductions = (e.deductionItems||[]).filter(isRecurring);
+    const keptBonuses = (e.bonusItems||[]).filter(isRecurring);
+    const deductionsChanged = keptDeductions.length !== (e.deductionItems||[]).length;
+    const bonusesChanged = keptBonuses.length !== (e.bonusItems||[]).length;
+    if(deductionsChanged || bonusesChanged){
+      clearedCount++;
+      e.deductionItems = keptDeductions;
+      e.bonusItems = keptBonuses;
+      await sb.from('employees').update({ deduction_items: keptDeductions, bonus_items: keptBonuses }).eq('id', e.id);
+    }
+  }
+
+  logAudit('Payroll finalized', `${c.period} — ${rows.length} employee record(s)${clearedCount ? `, one-off items cleared for ${clearedCount} employee(s)` : ''}`);
   render();
-  alert(`Payroll finalized for ${c.period}. ${rows.length} employee record(s) saved to history. You can close this period once you're satisfied it's correct — closing is permanent.`);
+  alert(`Payroll finalized for ${c.period}. ${rows.length} employee record(s) saved to history.${clearedCount ? ` One-off pay/deductions cleared for ${clearedCount} employee(s) — recurring items carry forward automatically.` : ''} You can close this period once you're satisfied it's correct — closing is permanent.`);
 }
 
 async function closePeriod(){
