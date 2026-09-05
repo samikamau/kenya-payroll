@@ -311,6 +311,19 @@ const rememberAwareStorage = {
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storage: rememberAwareStorage } });
 
 let state = { clients: {}, activeClient: null, settingsOpen: false, activityLogOpen: false };
+let employeeRowLimit = parseInt(localStorage.getItem('employeeRowLimit')) || 5;
+let showAllEmployees = false;
+function setEmployeeRowLimit(value){
+  const n = parseInt(value);
+  employeeRowLimit = (n && n > 0) ? n : 5;
+  localStorage.setItem('employeeRowLimit', employeeRowLimit);
+  showAllEmployees = false;
+  render();
+}
+function toggleShowAllEmployees(){
+  showAllEmployees = !showAllEmployees;
+  render();
+}
 let authMode = 'signin'; // or 'signup'
 
 function esc(str){
@@ -709,6 +722,7 @@ async function addEmployeeRow(){
     disability:'No', exemptionCertNo:'', benefitDescription:'Benefit not given', benefitAmount:0, identityType:'National ID',
     department:'', employmentStatus:'Active', annualLeaveEntitlement:21, overtimePay:0
   });
+  showAllEmployees = true; // so the newly added row is immediately visible, not hidden past the current page limit
   render();
   logAudit('Employee added', `New employee row created`);
 }
@@ -1738,6 +1752,7 @@ function renderMain(){
   if(c.view === 'leave'){ renderLeaveView(main, c); return; }
 
   const results = c.employees.map(e => ({ e, r: calcEmployee(e) }));
+  const visibleResults = showAllEmployees ? results : results.slice(0, employeeRowLimit);
   const totals = results.reduce((acc, {r}) => {
     acc.gross += r.gross; acc.nssf += r.nssfEmployee; acc.shif += r.shif;
     acc.ahl += r.ahlEmployee; acc.paye += r.paye; acc.net += r.net;
@@ -1833,6 +1848,18 @@ function renderMain(){
       </div>
     </div>` : ''}
 
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12.5px;color:var(--muted);">
+      <span>Show</span>
+      <input type="number" min="1" value="${employeeRowLimit}" onchange="setEmployeeRowLimit(this.value)" ${showAllEmployees ? 'disabled' : ''}
+        style="width:56px;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:5px 6px;font-family:'JetBrains Mono',monospace;font-size:12.5px;" />
+      <span>employees per page</span>
+      ${c.employees.length > employeeRowLimit ? `
+        <span style="color:var(--line);">&middot;</span>
+        <a style="color:var(--gold);cursor:pointer;" onclick="toggleShowAllEmployees()">${showAllEmployees ? 'Show only ' + employeeRowLimit : 'Show all ' + c.employees.length}</a>
+      ` : ''}
+      <span style="margin-left:auto;">Showing ${visibleResults.length} of ${c.employees.length}</span>
+    </div>
+
     <div class="table-wrap">
       <table>
         <thead>
@@ -1853,7 +1880,7 @@ function renderMain(){
           </tr>
         </thead>
         <tbody>
-          ${results.map(({e,r}) => `
+          ${visibleResults.map(({e,r}) => `
             <tr onclick="openDrawer('${e.id}')">
               <td class="row-del" onclick="event.stopPropagation(); deleteEmployeeRow('${e.id}')">&times;</td>
               <td class="name-cell" onclick="event.stopPropagation()">
