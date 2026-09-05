@@ -774,12 +774,39 @@ function isPeriodClosed(c, period){
   const p = getPeriodRecord(c, period);
   return !!(p && p.status === 'Closed');
 }
+function isPeriodLocked(c, period){
+  // Both 'Processed' and 'Closed' block direct editing. The difference: Processed can be
+  // reopened (an explicit, logged action); Closed cannot, ever, per the two documents'
+  // resolved rule — this is the only place that distinction is decided.
+  const p = getPeriodRecord(c, period);
+  return !!(p && (p.status === 'Processed' || p.status === 'Closed'));
+}
 function blockIfClosed(c){
-  if(isPeriodClosed(c, c.period)){
-    alert(`${c.period} is closed and permanently locked. Switch to a different (open) pay period to make changes — closed periods cannot be amended, per your payroll integrity policy.`);
+  const p = getPeriodRecord(c, c.period);
+  if(p && p.status === 'Closed'){
+    alert(`${c.period} is closed and permanently locked. Switch to a different (open) pay period to make changes — closed periods cannot be amended, by anyone, through any part of this app.`);
+    return true;
+  }
+  if(p && p.status === 'Processed'){
+    alert(`${c.period} has been processed and is locked for editing. Click "Reopen payroll" below to amend it before re-processing, or switch to a different period.`);
     return true;
   }
   return false;
+}
+
+async function reopenPeriod(){
+  const c = state.clients[state.activeClient];
+  const record = getPeriodRecord(c, c.period);
+  if(!record || record.status !== 'Processed'){
+    alert('Only a Processed (not yet closed) period can be reopened.');
+    return;
+  }
+  if(!confirm(`Reopen ${c.period} for editing? This is logged. You'll need to process it again once you're done amending it.`)) return;
+  const { error } = await sb.from('payroll_periods').update({ status: 'Reopened' }).eq('id', record.id);
+  if(error){ alert('Could not reopen: ' + error.message); return; }
+  record.status = 'Reopened';
+  logAudit('Payroll period reopened', `${c.period} — reopened for amendment`);
+  render();
 }
 
 /* ---------------- Free trial gating ----------------
@@ -1952,9 +1979,13 @@ function renderMain(){
 
     ${isPeriodClosed(c, c.period) ? `
       <div style="background:rgba(199,123,110,0.12);border:1px solid rgba(199,123,110,0.4);border-radius:6px;padding:12px 16px;margin-bottom:18px;font-size:13px;color:#C77B6E;">
-        🔒 <strong>${c.period} is closed and read-only.</strong> Salaries, deductions, and employees cannot be changed while this period is selected. Switch to an open period above to make edits.
+        🔒 <strong>${c.period} is closed and permanently read-only.</strong> Nothing about this period can ever be changed again, by anyone. Switch to a different period above to make edits elsewhere.
       </div>
-    ` : ''}
+    ` : (getPeriodRecord(c, c.period) && getPeriodRecord(c, c.period).status === 'Processed' ? `
+      <div style="background:rgba(176,141,87,0.1);border:1px solid rgba(176,141,87,0.35);border-radius:6px;padding:12px 16px;margin-bottom:18px;font-size:13px;color:var(--gold);">
+        🔒 <strong>${c.period} is processed and locked for editing.</strong> Click "Reopen payroll to amend" below if you need to make a correction.
+      </div>
+    ` : '')}
 
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
       ${c.isPaid
@@ -2080,16 +2111,30 @@ function renderMain(){
               🔒 ${c.period} is CLOSED — permanently locked. Closed by ${esc(periodRecord.closedBy)} on ${periodRecord.closedAt ? new Date(periodRecord.closedAt).toLocaleDateString('en-KE') : ''}.
             </span>
           </div>
-          <div style="font-size:11.5px;color:var(--muted);margin-top:-12px;margin-bottom:20px;">Switch to a different pay period above to make changes. This period's figures cannot be edited, re-finalized, or deleted by anyone, through any part of this app.</div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:-12px;margin-bottom:20px;">Switch to a different pay period above to make changes. This period's figures cannot be edited, reopened, or deleted by anyone, through any part of this app.</div>
         `;
       }
       if(status === 'Processed'){
         return `
           <div class="actions">
-            <button class="btn primary" style="background:linear-gradient(135deg, var(--gold), #D9B876);" onclick="finalizePayrollRun(event)">Re-finalize ${c.period}</button>
+            <span style="font-size:12.5px;background:rgba(176,141,87,0.15);color:var(--gold);padding:8px 14px;border-radius:5px;font-weight:600;">
+              🔒 ${c.period} is Processed and locked for editing.
+            </span>
+            <button class="btn" onclick="reopenPeriod()">Reopen payroll to amend</button>
             <button class="btn" style="border-color:#C77B6E;color:#C77B6E;" onclick="closePeriod()">Close ${c.period} permanently</button>
           </div>
-          <div style="font-size:11.5px;color:var(--muted);margin-top:-12px;margin-bottom:20px;">Finalized, not yet closed — you can still correct and re-finalize. Once you close it, no further changes are possible.</div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:-12px;margin-bottom:20px;">Editing is locked until reopened — this is logged. Closing is a separate, irreversible step for once you're certain this period is final.</div>
+        `;
+      }
+      if(status === 'Reopened'){
+        return `
+          <div class="actions">
+            <span style="font-size:12.5px;background:rgba(110,159,199,0.18);color:#6E9FC7;padding:8px 14px;border-radius:5px;font-weight:600;">
+              ✎ ${c.period} is reopened for amendment.
+            </span>
+            <button class="btn primary" style="background:linear-gradient(135deg, var(--gold), #D9B876);" onclick="finalizePayrollRun(event)">Process ${c.period} again</button>
+          </div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:-12px;margin-bottom:20px;">Make your corrections above, then process again to re-lock this period.</div>
         `;
       }
       return `
