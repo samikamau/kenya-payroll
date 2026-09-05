@@ -75,7 +75,12 @@
   }
 
   /* Summary cards */
-  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:26px;}
+  .summary{display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:12px;margin-bottom:26px;}
+  .composition-wrap{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:18px 20px;margin-bottom:26px;}
+  .composition-bar{display:flex;width:100%;height:28px;border-radius:5px;overflow:hidden;margin:14px 0;}
+  .composition-legend{display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px 16px;}
+  .composition-legend-item{display:flex;align-items:center;gap:8px;font-size:12px;}
+  .composition-swatch{width:10px;height:10px;border-radius:2px;flex-shrink:0;}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px;}
   .card .label{font-size:11px;color:var(--muted);text-transform:none;margin-bottom:6px;}
   .card .value{font-family:'JetBrains Mono',monospace;font-size:19px;color:var(--ink);}
@@ -1399,10 +1404,22 @@ function renderMain(){
   const totals = results.reduce((acc, {r}) => {
     acc.gross += r.gross; acc.nssf += r.nssfEmployee; acc.shif += r.shif;
     acc.ahl += r.ahlEmployee; acc.paye += r.paye; acc.net += r.net;
-    acc.employerCost += r.employerCost;
+    acc.employerCost += r.employerCost; acc.otherDeduct += r.otherDeduct;
     return acc;
-  }, {gross:0,nssf:0,shif:0,ahl:0,paye:0,net:0,employerCost:0});
-  const totalDeductions = totals.nssf + totals.shif + totals.ahl + totals.paye;
+  }, {gross:0,nssf:0,shif:0,ahl:0,paye:0,net:0,employerCost:0,otherDeduct:0});
+  const totalDeductions = totals.nssf + totals.shif + totals.ahl + totals.paye + totals.otherDeduct;
+  const activeEmployees = c.employees.filter(e => e.employmentStatus !== 'Terminated').length;
+
+  // Composition bar: each segment as a % of gross pay, so the bar always sums to 100% of what
+  // was actually earned this period — built entirely from real totals above, nothing hard-coded.
+  const compSegments = totals.gross > 0 ? [
+    { label:'Net pay',        value: totals.net,         color:'#B08D57' },
+    { label:'PAYE',           value: totals.paye,        color:'#C77B6E' },
+    { label:'NSSF',           value: totals.nssf,        color:'#6E9FC7' },
+    { label:'SHIF',           value: totals.shif,        color:'#7EC7A0' },
+    { label:'Housing Levy',   value: totals.ahl,         color:'#C7B26E' },
+    { label:'Other ded.',     value: totals.otherDeduct, color:'#8A7EC7' }
+  ].filter(s => s.value > 0) : [];
 
   main.innerHTML = `
     <div class="topbar">
@@ -1457,11 +1474,25 @@ function renderMain(){
     ${state.settingsOpen ? renderSettings() : ''}
 
     <div class="summary">
+      <div class="card"><div class="label">Active employees</div><div class="value">${activeEmployees}</div></div>
       <div class="card"><div class="label">Total gross pay</div><div class="value">${fmt(totals.gross)}</div></div>
-      <div class="card deduct"><div class="label">Total statutory deductions</div><div class="value">${fmt(totalDeductions)}</div></div>
       <div class="card accent"><div class="label">Total net pay</div><div class="value">${fmt(totals.net)}</div></div>
+      <div class="card deduct"><div class="label">Total PAYE</div><div class="value">${fmt(totals.paye)}</div></div>
+      <div class="card deduct"><div class="label">Total NSSF/SHIF</div><div class="value">${fmt(totals.nssf + totals.shif)}</div></div>
       <div class="card"><div class="label">Total employer cost</div><div class="value">${fmt(totals.employerCost)}</div></div>
     </div>
+
+    ${compSegments.length > 0 ? `
+    <div class="composition-wrap">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">PAYROLL COMPOSITION — ${c.period || 'this period'}</div>
+      <div style="font-size:12px;color:var(--muted);">Basic ${fmt(results.reduce((s,{e})=>s+(e.basic||0),0))} + Allowances ${fmt(results.reduce((s,{e})=>s+(e.allowances||0),0))} = Gross ${fmt(totals.gross)}</div>
+      <div class="composition-bar">
+        ${compSegments.map(s => `<div style="width:${(s.value/totals.gross*100).toFixed(2)}%;background:${s.color};" title="${s.label}: ${fmt(s.value)} (${(s.value/totals.gross*100).toFixed(1)}%)"></div>`).join('')}
+      </div>
+      <div class="composition-legend">
+        ${compSegments.map(s => `<div class="composition-legend-item"><span class="composition-swatch" style="background:${s.color};"></span>${s.label}: ${fmt(s.value)} <span style="color:var(--muted);">(${(s.value/totals.gross*100).toFixed(1)}%)</span></div>`).join('')}
+      </div>
+    </div>` : ''}
 
     <div class="table-wrap">
       <table>
