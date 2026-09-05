@@ -97,6 +97,15 @@
 
   /* Table */
   .table-wrap{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:20px;}
+  .table-wrap.scroll-table{overflow:auto;max-height:480px;}
+  .table-wrap.scroll-table table{table-layout:fixed;}
+  .table-wrap.scroll-table thead th{position:sticky;top:0;background:var(--panel-2);z-index:2;}
+  .table-wrap.scroll-table th{position:relative;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .col-resize-handle{
+    position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;
+    background:transparent;z-index:3;
+  }
+  .col-resize-handle:hover, .col-resize-handle.resizing{background:var(--gold);}
   table{width:100%;border-collapse:collapse;font-size:13px;}
   thead th{
     text-align:left;padding:10px 12px;color:var(--muted);font-weight:500;
@@ -325,6 +334,57 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth:
 
 let state = { clients: {}, activeClient: null, settingsOpen: false, activityLogOpen: false };
 let employeeRowLimit = parseInt(localStorage.getItem('employeeRowLimit')) || 5;
+
+const EMP_TABLE_COLS = [
+  { key:'del', label:'', width:22, resizable:false },
+  { key:'name', label:'Employee', width:170, resizable:true },
+  { key:'basic', label:'Basic', width:95, resizable:true },
+  { key:'allowances', label:'Allowances', width:95, resizable:true },
+  { key:'overtime', label:'Overtime', width:90, resizable:true },
+  { key:'pension', label:'Pension', width:90, resizable:true },
+  { key:'insurance', label:'Insurance', width:90, resizable:true },
+  { key:'otherded', label:'Other ded.', width:90, resizable:true },
+  { key:'nssf', label:'NSSF', width:80, resizable:true },
+  { key:'shif', label:'SHIF', width:80, resizable:true },
+  { key:'housing', label:'Housing', width:85, resizable:true },
+  { key:'paye', label:'PAYE', width:85, resizable:true },
+  { key:'netpay', label:'Net pay', width:100, resizable:true }
+];
+let employeeColWidths = {};
+try{ employeeColWidths = JSON.parse(localStorage.getItem('employeeColWidths') || '{}'); }catch(e){ employeeColWidths = {}; }
+function getColWidth(key){
+  const col = EMP_TABLE_COLS.find(c => c.key === key);
+  return employeeColWidths[key] || (col ? col.width : 90);
+}
+let _resizeState = null;
+function startColResize(evt, key){
+  evt.preventDefault();
+  const th = evt.target.closest('th');
+  _resizeState = { key, startX: evt.clientX, startWidth: th.offsetWidth };
+  evt.target.classList.add('resizing');
+  document.addEventListener('mousemove', handleColResize);
+  document.addEventListener('mouseup', stopColResize);
+}
+function handleColResize(evt){
+  if(!_resizeState) return;
+  const delta = evt.clientX - _resizeState.startX;
+  const newWidth = Math.max(45, _resizeState.startWidth + delta);
+  const colEl = document.getElementById('col-' + _resizeState.key);
+  if(colEl) colEl.style.width = newWidth + 'px';
+}
+function stopColResize(){
+  if(!_resizeState) return;
+  const colEl = document.getElementById('col-' + _resizeState.key);
+  if(colEl){
+    employeeColWidths[_resizeState.key] = parseInt(colEl.style.width);
+    localStorage.setItem('employeeColWidths', JSON.stringify(employeeColWidths));
+  }
+  document.querySelectorAll('.col-resize-handle.resizing').forEach(el => el.classList.remove('resizing'));
+  document.removeEventListener('mousemove', handleColResize);
+  document.removeEventListener('mouseup', stopColResize);
+  _resizeState = null;
+}
+
 let showAllEmployees = false;
 function setEmployeeRowLimit(value){
   const n = parseInt(value);
@@ -1891,23 +1951,16 @@ function renderMain(){
       <span style="margin-left:auto;">Showing ${visibleResults.length} of ${c.employees.length}</span>
     </div>
 
-    <div class="table-wrap">
+    <div class="table-wrap scroll-table">
       <table>
+        <colgroup>
+          ${EMP_TABLE_COLS.map(col => `<col id="col-${col.key}" style="width:${getColWidth(col.key)}px;">`).join('')}
+        </colgroup>
         <thead>
           <tr>
-            <th style="width:22px"></th>
-            <th>Employee</th>
-            <th>Basic</th>
-            <th>Allowances</th>
-            <th>Overtime</th>
-            <th>Pension</th>
-            <th>Insurance</th>
-            <th>Other ded.</th>
-            <th>NSSF</th>
-            <th>SHIF</th>
-            <th>Housing</th>
-            <th>PAYE</th>
-            <th>Net pay</th>
+            ${EMP_TABLE_COLS.map(col => `
+              <th>${esc(col.label)}${col.resizable ? `<span class="col-resize-handle" onmousedown="startColResize(event,'${col.key}')"></span>` : ''}</th>
+            `).join('')}
           </tr>
         </thead>
         <tbody>
