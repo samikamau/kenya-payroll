@@ -739,20 +739,22 @@ function removeLogo(){
 }
 
 async function addClient(){
-  const { data: userData, error: userError } = await sb.auth.getUser();
-  console.log('DIAGNOSTIC — addClient: userError=', userError, ' userData.user=', userData?.user, ' user.id=', userData?.user?.id);
-  const { data: sessionCheck } = await sb.auth.getSession();
-  console.log('DIAGNOSTIC — current session user id=', sessionCheck?.session?.user?.id, ' expires_at=', sessionCheck?.session?.expires_at, ' now=', Math.floor(Date.now()/1000));
+  const { data: userData } = await sb.auth.getUser();
   if(!userData?.user?.id){
-    alert('Could not confirm your login session (see console for details). Try signing out and back in.');
+    alert('Could not confirm your login session. Try signing out and back in.');
     return;
   }
-  const { data, error } = await sb.from('companies').insert({ user_id: userData.user.id, name: 'Untitled Client' }).select().single();
-  if(error){ console.log('DIAGNOSTIC — insert error object:', error); alert(error.message); return; }
-  state.clients[data.id] = { name: data.name, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'',
-                              brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
-                              isPaid:false, trialPeriodUsed:null, view:'payroll', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
-  state.activeClient = data.id;
+  // Generate the ID ourselves and insert plainly, without asking Supabase to hand the row
+  // back in the same request. Chaining .select() after .insert() requires the SELECT policy
+  // to succeed for a row that's a split second old, which can behave unreliably — this avoids
+  // that dependency entirely, since we already know every value we just inserted.
+  const newId = crypto.randomUUID();
+  const { error } = await sb.from('companies').insert({ id: newId, user_id: userData.user.id, name: 'Untitled Client' });
+  if(error){ alert(error.message); return; }
+  state.clients[newId] = { name: 'Untitled Client', period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'', ownerId: userData.user.id,
+                            brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
+                            isPaid:false, trialPeriodUsed:null, view:'payroll', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
+  state.activeClient = newId;
   await addEmployeeRow();
 }
 let _pendingDeleteCode = null;
@@ -819,11 +821,14 @@ function selectClient(id){ state.activeClient = id; render(); }
 async function logAudit(action, details){
   try{
     const { data: userData } = await sb.auth.getUser();
-    const { data } = await sb.from('audit_log').insert({
-      company_id: state.activeClient, user_email: userData?.user?.email || '', action, details: details || ''
-    }).select().single();
+    const newId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const { error } = await sb.from('audit_log').insert({
+      id: newId, company_id: state.activeClient, user_email: userData?.user?.email || '', action, details: details || '', created_at: createdAt
+    });
+    if(error){ console.error('audit log failed', error); return; }
     const c = state.clients[state.activeClient];
-    if(c && c.auditLog && data) c.auditLog.unshift({ id: data.id, userEmail: data.user_email, action: data.action, details: data.details, createdAt: data.created_at });
+    if(c && c.auditLog) c.auditLog.unshift({ id: newId, userEmail: userData?.user?.email || '', action, details: details || '', createdAt });
   } catch(e){ console.error('audit log failed', e); }
 }
 
@@ -921,10 +926,11 @@ async function updateClientField(field, value){
 async function addEmployeeRow(){
   const c = state.clients[state.activeClient];
   if(blockIfClosed(c)) return;
-  const { data, error } = await sb.from('employees').insert({ company_id: state.activeClient }).select().single();
+  const newId = crypto.randomUUID();
+  const { error } = await sb.from('employees').insert({ id: newId, company_id: state.activeClient });
   if(error){ alert(error.message); return; }
   state.clients[state.activeClient].employees.push({
-    id: data.id, name:'', pin:'', idNumber:'', nssfNo:'', shaNo:'',
+    id: newId, name:'', pin:'', idNumber:'', nssfNo:'', shaNo:'',
     basic:0, allowances:0, pension:0, insurance:0, deductionItems:[],
     payrollNumber:'', phone:'', email:'', residentialStatus:'Resident', employeeType:'Primary Employee',
     disability:'No', exemptionCertNo:'', benefitDescription:'Benefit not given', benefitAmount:0, identityType:'National ID',
@@ -1799,13 +1805,14 @@ async function submitLeaveRequest(evt){
   const days = daysBetween(startDate, endDate);
   if(days <= 0){ alert('End date must be on or after the start date.'); return; }
 
-  const { data, error } = await sb.from('leave_requests').insert({
-    company_id: state.activeClient, employee_id: employeeId, leave_type: leaveType,
+  const newId = crypto.randomUUID();
+  const { error } = await sb.from('leave_requests').insert({
+    id: newId, company_id: state.activeClient, employee_id: employeeId, leave_type: leaveType,
     start_date: startDate, end_date: endDate, days, status: 'Pending', notes
-  }).select().single();
+  });
   if(error){ alert('Could not submit leave request: ' + error.message); return; }
 
-  c.leaveRequests.unshift({ id: data.id, employeeId, leaveType, startDate, endDate, days, status: 'Pending', notes });
+  c.leaveRequests.unshift({ id: newId, employeeId, leaveType, startDate, endDate, days, status: 'Pending', notes });
   render();
 }
 
@@ -1877,16 +1884,22 @@ async function finalizePayrollRun(evt){
     return acc;
   }, { gross:0, net:0, paye:0 });
 
-  const { data: periodData, error: periodError } = await sb.from('payroll_periods').upsert({
+  const { error: periodError } = await sb.from('payroll_periods').upsert({
     company_id: state.activeClient, period: c.period, status: 'Processed',
     employee_count: rows.length, total_gross: periodTotals.gross, total_net: periodTotals.net, total_paye: periodTotals.paye
-  }, { onConflict: 'company_id,period' }).select().single();
+  }, { onConflict: 'company_id,period' });
+
+  if(periodError){ btn.textContent = originalText; btn.disabled = false; alert('Payroll data was saved, but the period status could not be updated: ' + periodError.message); return; }
+
+  // Fetch the id as a separate, plain query afterward — an upsert can't safely generate the id
+  // client-side (an existing row must keep its original id on conflict), and a follow-up select
+  // in its own request avoids the same-statement RETURNING+policy interaction entirely.
+  const { data: periodRow } = await sb.from('payroll_periods').select('id').eq('company_id', state.activeClient).eq('period', c.period).single();
 
   btn.textContent = originalText; btn.disabled = false;
-  if(periodError){ alert('Payroll data was saved, but the period status could not be updated: ' + periodError.message); return; }
 
   const existing = getPeriodRecord(c, c.period);
-  const rec = { id: periodData.id, period: c.period, status: 'Processed', employeeCount: rows.length,
+  const rec = { id: periodRow?.id, period: c.period, status: 'Processed', employeeCount: rows.length,
                 totalGross: periodTotals.gross, totalNet: periodTotals.net, totalPaye: periodTotals.paye,
                 closedBy: '', closedAt: null };
   if(existing) Object.assign(existing, rec); else c.payrollPeriods.push(rec);
@@ -1929,11 +1942,13 @@ async function closePeriod(){
     return;
   }
   const { data: userData } = await sb.auth.getUser();
-  const { data, error } = await sb.from('payroll_periods').update({
-    status: 'Closed', closed_by: userData?.user?.email || '', closed_at: new Date().toISOString()
-  }).eq('id', record.id).select().single();
+  const closedBy = userData?.user?.email || '';
+  const closedAt = new Date().toISOString();
+  const { error } = await sb.from('payroll_periods').update({
+    status: 'Closed', closed_by: closedBy, closed_at: closedAt
+  }).eq('id', record.id);
   if(error){ alert('Could not close period: ' + error.message); return; }
-  record.status = 'Closed'; record.closedBy = data.closed_by; record.closedAt = data.closed_at;
+  record.status = 'Closed'; record.closedBy = closedBy; record.closedAt = closedAt;
   logAudit('Payroll period closed', `${c.period} — permanently locked (${record.employeeCount} employees, net pay ${fmt(record.totalNet)})`);
   render();
   alert(`${c.period} is now closed and permanently read-only.`);
