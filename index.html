@@ -276,6 +276,12 @@
   <div id="drawerContent"></div>
 </div>
 
+<div class="drawer-backdrop" id="panelBackdrop" onclick="closePanel()"></div>
+<div class="drawer" id="panelDrawer">
+  <button class="close-drawer" onclick="closePanel()">&times;</button>
+  <div id="panelContent"></div>
+</div>
+
 <script>
 /* ---------------------------------------------------------------------
    STATUTORY RATE CONFIG — Kenya, effective 1 Feb 2026.
@@ -360,7 +366,7 @@ async function ensureZipLibLoaded(){
   await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
 }
 
-let state = { clients: {}, activeClient: null, settingsOpen: false, activityLogOpen: false, sharePanelOpen: false, currentUserId: null };
+let state = { clients: {}, activeClient: null, settingsOpen: false, currentUserId: null };
 let employeeRowLimit = parseInt(localStorage.getItem('employeeRowLimit')) || 5;
 
 const EMP_TABLE_COLS = [
@@ -1238,13 +1244,20 @@ function toggleSettings(){
   state.settingsOpen = !state.settingsOpen;
   render();
 }
+function openPanel(html){
+  document.getElementById('panelContent').innerHTML = html;
+  document.getElementById('panelDrawer').classList.add('open');
+  document.getElementById('panelBackdrop').classList.add('open');
+}
+function closePanel(){
+  document.getElementById('panelDrawer').classList.remove('open');
+  document.getElementById('panelBackdrop').classList.remove('open');
+}
 async function toggleActivityLog(){
-  state.activityLogOpen = !state.activityLogOpen;
-  render();
-  if(state.activityLogOpen && state.activeClient){
-    await ensureAuditLogLoaded(state.activeClient);
-    render();
-  }
+  const c = state.clients[state.activeClient];
+  if(!c) return;
+  await ensureAuditLogLoaded(state.activeClient);
+  openPanel(renderActivityLog(c));
 }
 
 /* ---------------- Multi-user company sharing ----------------
@@ -1254,9 +1267,10 @@ async function toggleActivityLog(){
 ------------------------------------------------------------------------------------- */
 let shareListCache = {}; // companyId -> array of { id, email }
 async function toggleSharePanel(){
-  state.sharePanelOpen = !state.sharePanelOpen;
-  if(state.sharePanelOpen && state.activeClient) await loadShares(state.activeClient);
-  render();
+  const c = state.clients[state.activeClient];
+  if(!c || !state.activeClient) return;
+  await loadShares(state.activeClient);
+  openPanel(renderSharePanel(c));
 }
 async function loadShares(companyId){
   const { data, error } = await sb.from('company_access').select('*').eq('company_id', companyId);
@@ -1277,7 +1291,7 @@ async function shareCompanyWithColleague(){
   if(error){ alert('Could not share: ' + error.message); return; }
   logAudit('Client shared', `Access granted to ${cleanEmail}`);
   await loadShares(state.activeClient);
-  render();
+  openPanel(renderSharePanel(state.clients[state.activeClient]));
 }
 async function revokeShare(accessId, email){
   if(!confirm(`Remove ${email}'s access to this client?`)) return;
@@ -1285,7 +1299,7 @@ async function revokeShare(accessId, email){
   if(error){ alert('Could not revoke access: ' + error.message); return; }
   logAudit('Client access revoked', `Removed access for ${email}`);
   await loadShares(state.activeClient);
-  render();
+  openPanel(renderSharePanel(state.clients[state.activeClient]));
 }
 function renderSharePanel(c){
   const shares = shareListCache[state.activeClient] || [];
@@ -2273,8 +2287,7 @@ function renderMain(){
     </div>
 
     ${state.settingsOpen ? renderSettings() : ''}
-    ${state.activityLogOpen ? renderActivityLog(c) : ''}
-    ${state.sharePanelOpen ? renderSharePanel(c) : ''}
+
 
     <div class="summary">
       <div class="card"><div class="label">Active employees</div><div class="value">${activeEmployees}</div></div>
