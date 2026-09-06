@@ -739,9 +739,16 @@ function removeLogo(){
 }
 
 async function addClient(){
-  const { data: userData } = await sb.auth.getUser();
+  const { data: userData, error: userError } = await sb.auth.getUser();
+  console.log('DIAGNOSTIC — addClient: userError=', userError, ' userData.user=', userData?.user, ' user.id=', userData?.user?.id);
+  const { data: sessionCheck } = await sb.auth.getSession();
+  console.log('DIAGNOSTIC — current session user id=', sessionCheck?.session?.user?.id, ' expires_at=', sessionCheck?.session?.expires_at, ' now=', Math.floor(Date.now()/1000));
+  if(!userData?.user?.id){
+    alert('Could not confirm your login session (see console for details). Try signing out and back in.');
+    return;
+  }
   const { data, error } = await sb.from('companies').insert({ user_id: userData.user.id, name: 'Untitled Client' }).select().single();
-  if(error){ alert(error.message); return; }
+  if(error){ console.log('DIAGNOSTIC — insert error object:', error); alert(error.message); return; }
   state.clients[data.id] = { name: data.name, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'',
                               brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
                               isPaid:false, trialPeriodUsed:null, view:'payroll', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
@@ -2306,11 +2313,11 @@ function renderMain(){
               <td class="name-cell" onclick="event.stopPropagation()">
                 <input value="${esc(e.name)}" placeholder="Name" onchange="updateEmployeeField('${e.id}','name',this.value)" />
               </td>
-              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.basic||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','basic',this.value)" /></td>
-              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.allowances||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','allowances',this.value)" /></td>
-              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.overtimePay||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','overtimePay',this.value)" /></td>
-              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.pension||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','pension',this.value)" /></td>
-              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.insurance||''}" placeholder="0" onchange="updateEmployeeField('${e.id}','insurance',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.basic||''}" placeholder="0" ${e.name&&e.name.trim()?'':'disabled title="Enter the employee\'s name first"'} onchange="updateEmployeeField('${e.id}','basic',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.allowances||''}" placeholder="0" ${e.name&&e.name.trim()?'':'disabled title="Enter the employee\'s name first"'} onchange="updateEmployeeField('${e.id}','allowances',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.overtimePay||''}" placeholder="0" ${e.name&&e.name.trim()?'':'disabled title="Enter the employee\'s name first"'} onchange="updateEmployeeField('${e.id}','overtimePay',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.pension||''}" placeholder="0" ${e.name&&e.name.trim()?'':'disabled title="Enter the employee\'s name first"'} onchange="updateEmployeeField('${e.id}','pension',this.value)" /></td>
+              <td onclick="event.stopPropagation()"><input class="mono" type="number" value="${e.insurance||''}" placeholder="0" ${e.name&&e.name.trim()?'':'disabled title="Enter the employee\'s name first"'} onchange="updateEmployeeField('${e.id}','insurance',this.value)" /></td>
               <td class="num" style="color:var(--muted);" title="Manage in the deductions panel — click the row">${fmt(r.otherDeduct)}</td>
               <td class="num">${fmt(r.nssfEmployee)}</td>
               <td class="num">${fmt(r.shif)}</td>
