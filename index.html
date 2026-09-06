@@ -676,16 +676,6 @@ async function ensureAuditLogLoaded(companyId){
   c.auditLog = (auditLog||[]).map(a => ({ id: a.id, userEmail: a.user_email, action: a.action, details: a.details, createdAt: a.created_at }));
   c.auditLogLoaded = true;
 }
-async function loadRates(){
-  const { data: userData } = await sb.auth.getUser();
-  const { data } = await sb.from('statutory_rates').select('rates').eq('user_id', userData.user.id).maybeSingle();
-  if(data && data.rates) RATES = Object.assign(RATES, data.rates);
-}
-async function saveRates(){
-  const { data: userData } = await sb.auth.getUser();
-  await sb.from('statutory_rates').upsert({ user_id: userData.user.id, rates: RATES });
-}
-
 async function boot(){
   const { data: { session } } = await sb.auth.getSession();
   if(!session){
@@ -697,7 +687,6 @@ async function boot(){
   document.getElementById('appRoot').style.display = 'flex';
   document.getElementById('userBadge').textContent = session.user.email;
   state.currentUserId = session.user.id;
-  await loadRates();
   await fetchAllData();
   render();
 }
@@ -1339,12 +1328,6 @@ function renderActivityLog(c){
       </div>
     </div>
   `;
-}
-function updateRate(key, value){
-  RATES[key] = parseFloat(value) || 0;
-  saveRates();
-  render();
-  openPanel(renderSettings());
 }
 function openDrawer(empId){
   const c = state.clients[state.activeClient];
@@ -2425,18 +2408,18 @@ function renderSettings(){
     <div class="settings-panel">
       <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;">Statutory rates in effect</h3>
       <div class="settings-grid">
-        <div class="settings-field"><label>NSSF lower limit (Tier I)</label><input type="number" value="${RATES.nssfLEL}" onchange="updateRate('nssfLEL', this.value)"/></div>
-        <div class="settings-field"><label>NSSF upper limit (Tier II)</label><input type="number" value="${RATES.nssfUEL}" onchange="updateRate('nssfUEL', this.value)"/></div>
-        <div class="settings-field"><label>NSSF rate (each side)</label><input type="number" step="0.001" value="${RATES.nssfRate}" onchange="updateRate('nssfRate', this.value)"/></div>
-        <div class="settings-field"><label>SHIF rate</label><input type="number" step="0.001" value="${RATES.shifRate}" onchange="updateRate('shifRate', this.value)"/></div>
-        <div class="settings-field"><label>SHIF minimum</label><input type="number" value="${RATES.shifMin}" onchange="updateRate('shifMin', this.value)"/></div>
-        <div class="settings-field"><label>Housing Levy rate (each side)</label><input type="number" step="0.001" value="${RATES.ahlRate}" onchange="updateRate('ahlRate', this.value)"/></div>
-        <div class="settings-field"><label>Personal relief (monthly)</label><input type="number" value="${RATES.personalRelief}" onchange="updateRate('personalRelief', this.value)"/></div>
-        <div class="settings-field"><label>Insurance relief cap</label><input type="number" value="${RATES.insuranceReliefCap}" onchange="updateRate('insuranceReliefCap', this.value)"/></div>
-        <div class="settings-field"><label>NITA levy (per employee)</label><input type="number" value="${RATES.nitaLevy}" onchange="updateRate('nitaLevy', this.value)"/></div>
+        <div class="settings-field"><label>NSSF lower limit (Tier I)</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${fmt(RATES.nssfLEL)}</div></div>
+        <div class="settings-field"><label>NSSF upper limit (Tier II)</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${fmt(RATES.nssfUEL)}</div></div>
+        <div class="settings-field"><label>NSSF rate (each side)</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${(RATES.nssfRate*100).toFixed(1)}%</div></div>
+        <div class="settings-field"><label>SHIF rate</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${(RATES.shifRate*100).toFixed(2)}%</div></div>
+        <div class="settings-field"><label>SHIF minimum</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${fmt(RATES.shifMin)}</div></div>
+        <div class="settings-field"><label>Housing Levy rate (each side)</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${(RATES.ahlRate*100).toFixed(1)}%</div></div>
+        <div class="settings-field"><label>Personal relief (monthly)</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${fmt(RATES.personalRelief)}</div></div>
+        <div class="settings-field"><label>Insurance relief cap</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${fmt(RATES.insuranceReliefCap)}</div></div>
+        <div class="settings-field"><label>NITA levy (per employee)</label><div class="mono" style="padding:6px 8px;color:var(--ink);">${fmt(RATES.nitaLevy)}</div></div>
       </div>
       <div class="settings-note">
-        Rates shown reflect NSSF Tier limits effective 1 Feb 2026, SHIF at 2.75% of gross (min KES 300), Housing Levy at 1.5%/1.5%, and PAYE bands of 10/25/30/32.5/35%. Verify against the current KRA and NSSF gazette notices before each pay run, and update the fields above if a rate changes.
+        Rates shown reflect NSSF Tier limits effective 1 Feb 2026, SHIF at 2.75% of gross (min KES 300), Housing Levy at 1.5%/1.5%, and PAYE bands of 10/25/30/32.5/35%. These are managed centrally by Finlens Africa and updated when KRA, NSSF, or SHA publish a new gazette notice — they can't be edited here, so every client on the platform always calculates against the same correct figures. If you believe a rate needs updating, contact us directly.
       </div>
     </div>
   `;
