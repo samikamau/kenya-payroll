@@ -754,7 +754,7 @@ async function addClient(){
                             brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
                             isPaid:false, trialPeriodUsed:null, view:'payroll', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = newId;
-  await addEmployeeRow();
+  render(); // rename this client above, then use "+ Add employee" — a client can't have employees added while still called "Untitled Client"
 }
 let _pendingDeleteCode = null;
 let _pendingDeleteExpiry = 0;
@@ -887,7 +887,15 @@ async function reopenPeriod(){
    is wired up yet, so "mark as paid" is a judgment call you make after collecting
    payment outside the app (M-Pesa, bank transfer, etc.).
 ------------------------------------------------------------------------------ */
+function hasRealClientName(c){
+  const name = (c.name || '').trim().toLowerCase();
+  return name.length > 0 && name !== 'untitled client';
+}
 function requireAccess(c){
+  if(!hasRealClientName(c)){
+    alert('Give this client a real name (top of the page) before running payroll for them — "Untitled Client" can\'t be used for anything beyond initial setup.');
+    return false;
+  }
   if(c.isPaid) return true;
   const currentPeriod = c.period || '(no period set)';
   if(!c.trialPeriodUsed){
@@ -902,18 +910,28 @@ function requireAccess(c){
 async function markClientPaid(){
   const c = state.clients[state.activeClient];
   if(!c) return;
+  if(!state.isPlatformAdmin){
+    alert('Only the Finlens Africa admin can activate paid status for a client. If you\'ve made payment, contact us and we\'ll activate it for you.');
+    return;
+  }
   if(!confirm(`Mark "${c.name || 'this client'}" as paid? This unlocks unlimited payroll cycles for them.`)) return;
+  const { error } = await sb.from('companies').update({ is_paid: true }).eq('id', state.activeClient);
+  if(error){ alert('Could not update paid status: ' + error.message); return; }
   c.isPaid = true;
-  await sb.from('companies').update({ is_paid: true }).eq('id', state.activeClient);
   logAudit('Client marked as paid', c.name || '');
   render();
 }
 async function markClientUnpaid(){
   const c = state.clients[state.activeClient];
   if(!c) return;
+  if(!state.isPlatformAdmin){
+    alert('Only the Finlens Africa admin can change paid status for a client.');
+    return;
+  }
   if(!confirm(`Move "${c.name || 'this client'}" back to trial status? They'll be restricted again once their trial period is used.`)) return;
+  const { error } = await sb.from('companies').update({ is_paid: false }).eq('id', state.activeClient);
+  if(error){ alert('Could not update paid status: ' + error.message); return; }
   c.isPaid = false;
-  await sb.from('companies').update({ is_paid: false }).eq('id', state.activeClient);
   logAudit('Client moved back to trial', c.name || '');
   render();
 }
@@ -924,6 +942,10 @@ async function updateClientField(field, value){
 }
 async function addEmployeeRow(){
   const c = state.clients[state.activeClient];
+  if(!hasRealClientName(c)){
+    alert('Give this client a real name (top of the page) before adding employees.');
+    return;
+  }
   if(blockIfClosed(c)) return;
   const newId = crypto.randomUUID();
   const { error } = await sb.from('employees').insert({ id: newId, company_id: state.activeClient });
@@ -2235,10 +2257,13 @@ function renderMain(){
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
       ${c.isPaid
         ? `<span style="font-size:12px;background:rgba(176,141,87,0.15);color:var(--gold);padding:5px 10px;border-radius:4px;">Active (paid)</span>
-           <button class="btn" style="font-size:11.5px;padding:5px 10px;" onclick="markClientUnpaid()">Move back to trial</button>`
+           ${state.isPlatformAdmin ? `<button class="btn" style="font-size:11.5px;padding:5px 10px;" onclick="markClientUnpaid()">Move back to trial</button>` : ''}`
         : (c.trialPeriodUsed
             ? `<span style="font-size:12px;background:rgba(199,123,110,0.18);color:#C77B6E;padding:5px 10px;border-radius:4px;">Free trial used (${c.trialPeriodUsed})${c.trialPeriodUsed !== (c.period||'') ? ' \u2014 new periods blocked' : ''}</span>
-               <button class="btn primary" style="font-size:11.5px;padding:5px 10px;" onclick="markClientPaid()">Mark as paid</button>`
+               ${state.isPlatformAdmin
+                  ? `<button class="btn primary" style="font-size:11.5px;padding:5px 10px;" onclick="markClientPaid()">Mark as paid</button>`
+                  : `<span style="font-size:11.5px;color:var(--muted);">Made payment? Contact Finlens Africa to activate this client.</span>`
+               }`
             : `<span style="font-size:12.5px;font-weight:600;background:linear-gradient(135deg, var(--gold), #D9B876);color:var(--bg);padding:6px 12px;border-radius:5px;box-shadow:0 0 0 1px rgba(176,141,87,0.4);">✨ Free trial: 1 payroll cycle available — try it now</span>`
           )
       }
