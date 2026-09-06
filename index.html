@@ -260,6 +260,7 @@
       <button class="rail-btn" onclick="toggleSettings()">Statutory rates &amp; settings</button>
       <button class="rail-btn" onclick="toggleActivityLog()">Activity log</button>
       <button class="rail-btn" onclick="toggleSharePanel()">Share &amp; access</button>
+      <button class="rail-btn" id="adminBtn" style="display:none;color:var(--gold);" onclick="openPlatformAdminPanel()">Platform Admin</button>
       <button class="rail-btn" onclick="handleSignOut()">Sign out</button>
       <div class="user-badge" id="userBadge"></div>
     </div>
@@ -687,6 +688,9 @@ async function boot(){
   document.getElementById('appRoot').style.display = 'flex';
   document.getElementById('userBadge').textContent = session.user.email;
   state.currentUserId = session.user.id;
+  const { data: isAdmin } = await sb.rpc('is_platform_admin');
+  state.isPlatformAdmin = isAdmin === true;
+  document.getElementById('adminBtn').style.display = state.isPlatformAdmin ? 'block' : 'none';
   await fetchAllData();
   render();
 }
@@ -2401,6 +2405,63 @@ function renderMain(){
       These three exports match real KRA P10A, NSSF, and SHA sample templates column-for-column. Fill in KRA PIN, National ID, NSSF/SHA numbers, and payroll number per employee (click a row &rarr; Statutory identifiers) for a complete file, or bulk-load them with "Import employees (CSV)" using the template above. If any authority changes its template layout, bring me the new sample and I'll update the export to match.
     </div>
   `;
+}
+
+async function openPlatformAdminPanel(){
+  if(!state.isPlatformAdmin){ alert('Not authorized.'); return; }
+  openPanel(`<div class="settings-panel"><div style="color:var(--muted);font-size:13px;">Loading platform stats…</div></div>`);
+
+  const [{ data: stats, error: statsError }, { data: companiesList, error: companiesError }, { data: accountsList, error: accountsError }] = await Promise.all([
+    sb.rpc('admin_get_platform_stats'),
+    sb.rpc('admin_get_all_companies'),
+    sb.rpc('admin_get_all_accounts')
+  ]);
+
+  if(statsError || companiesError || accountsError){
+    openPanel(`<div class="settings-panel"><div style="color:#C77B6E;font-size:13px;">Could not load platform data: ${esc((statsError||companiesError||accountsError).message)}</div></div>`);
+    return;
+  }
+
+  const s = stats[0] || { total_accounts:0, total_companies:0, paid_companies:0, trial_companies:0 };
+  const companies = companiesList || [];
+  const accounts = accountsList || [];
+
+  openPanel(`
+    <div class="settings-panel">
+      <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:4px;">Platform Admin</h3>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px;">Visible only to you — enforced by the database, not just this screen.</div>
+
+      <div class="summary" style="margin-bottom:20px;">
+        <div class="card"><div class="label">Total accounts</div><div class="value">${s.total_accounts}</div></div>
+        <div class="card"><div class="label">Total clients</div><div class="value">${s.total_companies}</div></div>
+        <div class="card accent"><div class="label">Paid</div><div class="value">${s.paid_companies}</div></div>
+        <div class="card deduct"><div class="label">On trial</div><div class="value">${s.trial_companies}</div></div>
+      </div>
+
+      <h3 style="font-size:12px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:8px;">All clients (${companies.length})</h3>
+      <div style="max-height:220px;overflow-y:auto;margin-bottom:20px;">
+        ${companies.map(c => `
+          <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;">
+            <div>
+              <div style="color:var(--ink);">${esc(c.client_name) || 'Untitled Client'}</div>
+              <div style="color:var(--muted);font-size:11px;">${esc(c.owner_email)}</div>
+            </div>
+            <span style="color:${c.is_paid ? 'var(--gold)' : '#C77B6E'};white-space:nowrap;">${c.is_paid ? 'Paid' : 'Trial'}</span>
+          </div>
+        `).join('')}
+      </div>
+
+      <h3 style="font-size:12px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:8px;">All accounts (${accounts.length})</h3>
+      <div style="max-height:220px;overflow-y:auto;">
+        ${accounts.map(a => `
+          <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;">
+            <span style="color:var(--ink);">${esc(a.email)}</span>
+            <span style="color:var(--muted);font-size:11px;white-space:nowrap;">Joined ${new Date(a.created_at).toLocaleDateString('en-KE')}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `);
 }
 
 function renderSettings(){
