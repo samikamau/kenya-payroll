@@ -747,14 +747,20 @@ async function addClient(){
     alert('Please confirm your email address before adding a client — check your inbox for the confirmation link we sent when you signed up. Contact us if you need it resent.');
     return;
   }
+  const name = prompt("Enter this client's name:");
+  if(name === null) return; // cancelled
+  const cleanName = name.trim();
+  if(!cleanName){ alert('A client name is required — nothing was created.'); return; }
+  if(cleanName.toLowerCase() === 'untitled client'){ alert("Please use the client's actual name."); return; }
+
   // Generate the ID ourselves and insert plainly, without asking Supabase to hand the row
   // back in the same request. Chaining .select() after .insert() requires the SELECT policy
   // to succeed for a row that's a split second old, which can behave unreliably — this avoids
   // that dependency entirely, since we already know every value we just inserted.
   const newId = crypto.randomUUID();
-  const { error } = await sb.from('companies').insert({ id: newId, user_id: userData.user.id, name: 'Untitled Client' });
+  const { error } = await sb.from('companies').insert({ id: newId, user_id: userData.user.id, name: cleanName });
   if(error){ alert(error.message); return; }
-  state.clients[newId] = { name: 'Untitled Client', period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'', ownerId: userData.user.id,
+  state.clients[newId] = { name: cleanName, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'', ownerId: userData.user.id,
                             brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
                             isPaid:false, trialPeriodUsed:null, view:'payroll', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = newId;
