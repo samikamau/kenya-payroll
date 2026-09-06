@@ -195,9 +195,6 @@
   .user-badge{font-size:11.5px;color:var(--muted);padding:6px 2px;border-top:1px solid var(--line);margin-top:6px;padding-top:12px;word-break:break-all;}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 
@@ -255,7 +252,9 @@
   <div class="rail">
     <div class="rail-title">FINLENS AFRICA</div>
     <div class="rail-sub">Payroll &middot; Kenya</div>
-    <div id="clientList"></div>
+    <div id="clientList">
+      <div style="font-size:12.5px;color:var(--muted);padding:10px 0;">Loading your clients…</div>
+    </div>
     <button class="add-client" onclick="addClient()">+ Add client</button>
     <div class="rail-footer">
       <button class="rail-btn" onclick="toggleSettings()">Statutory rates &amp; settings</button>
@@ -266,7 +265,9 @@
     </div>
   </div>
 
-  <div class="main" id="mainArea"></div>
+  <div class="main" id="mainArea">
+    <div style="display:flex;align-items:center;justify-content:center;height:60vh;color:var(--muted);font-size:13.5px;">Loading payroll…</div>
+  </div>
 </div>
 
 <div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawer()"></div>
@@ -332,6 +333,32 @@ const rememberAwareStorage = {
   }
 };
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storage: rememberAwareStorage } });
+
+/* ---------------- Lazy-loaded libraries ----------------
+   jsPDF, autotable, and JSZip together are several hundred KB — loading them eagerly on
+   every visit meant even just signing in paid that cost, whether or not you ever exported
+   anything. These now load once, the first time an export action actually needs them, and
+   are cached afterward so it only ever happens once per session.
+------------------------------------------------------------------------------------------ */
+const _loadedScripts = {};
+function loadScriptOnce(src){
+  if(_loadedScripts[src]) return _loadedScripts[src];
+  _loadedScripts[src] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => { delete _loadedScripts[src]; reject(new Error('Failed to load ' + src)); };
+    document.head.appendChild(s);
+  });
+  return _loadedScripts[src];
+}
+async function ensurePdfLibsLoaded(){
+  await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  await loadScriptOnce('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js');
+}
+async function ensureZipLibLoaded(){
+  await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+}
 
 let state = { clients: {}, activeClient: null, settingsOpen: false, activityLogOpen: false, sharePanelOpen: false, currentUserId: null };
 let employeeRowLimit = parseInt(localStorage.getItem('employeeRowLimit')) || 5;
@@ -584,11 +611,18 @@ async function fetchAllData(){
   const { data: companies, error } = await sb.from('companies').select('*').order('created_at');
   if(error){ alert('Could not load clients: ' + error.message); return; }
   state.clients = {};
-  for(const c of companies){
-    const { data: employees } = await sb.from('employees').select('*').eq('company_id', c.id).order('created_at');
-    const { data: leaveRequests } = await sb.from('leave_requests').select('*').eq('company_id', c.id).order('start_date', { ascending: false });
-    const { data: auditLog } = await sb.from('audit_log').select('*').eq('company_id', c.id).order('created_at', { ascending: false }).limit(50);
-    const { data: payrollPeriods } = await sb.from('payroll_periods').select('*').eq('company_id', c.id);
+
+  // Load every company concurrently instead of one-after-another — this is the single biggest
+  // speed fix. With 5 clients, the old code did 20 sequential network round-trips before
+  // rendering anything; this does them all in parallel instead. Leave requests and the audit
+  // log are also deferred entirely until you actually open that tab/panel, since most logins
+  // never touch them for most clients — payroll_periods stays eager since the payroll view
+  // needs it immediately to show locked/processed status correctly on first paint.
+  await Promise.all(companies.map(async (c) => {
+    const [{ data: employees }, { data: payrollPeriods }] = await Promise.all([
+      sb.from('employees').select('*').eq('company_id', c.id).order('created_at'),
+      sb.from('payroll_periods').select('*').eq('company_id', c.id)
+    ]);
     state.clients[c.id] = {
       name: c.name, period: c.period, kraPin: c.kra_pin, ownerId: c.user_id,
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
@@ -596,12 +630,9 @@ async function fetchAllData(){
       logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
       isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null,
       view: 'payroll',
-      auditLog: (auditLog||[]).map(a => ({ id: a.id, userEmail: a.user_email, action: a.action, details: a.details, createdAt: a.created_at })),
+      auditLog: [], auditLogLoaded: false,
+      leaveRequests: [], leaveRequestsLoaded: false,
       payrollPeriods: (payrollPeriods||[]).map(p => ({ id: p.id, period: p.period, status: p.status, employeeCount: p.employee_count, totalGross: p.total_gross, totalNet: p.total_net, totalPaye: p.total_paye, closedBy: p.closed_by, closedAt: p.closed_at })),
-      leaveRequests: (leaveRequests||[]).map(l => ({
-        id: l.id, employeeId: l.employee_id, leaveType: l.leave_type, startDate: l.start_date, endDate: l.end_date,
-        days: l.days, status: l.status, notes: l.notes||''
-      })),
       employees: (employees||[]).map(e => ({
         id: e.id, name: e.name, pin: e.pin, idNumber: e.id_number, nssfNo: e.nssf_no, shaNo: e.sha_no,
         basic: e.basic, allowances: e.allowances, pension: e.pension, insurance: e.insurance, deductionItems: e.deduction_items || [],
@@ -613,12 +644,31 @@ async function fetchAllData(){
         bonusItems: e.bonus_items || []
       }))
     };
-  }
+  }));
+
   if(companies.length === 0){
     await addClient();
   } else {
     state.activeClient = companies[0].id;
   }
+}
+
+async function ensureLeaveRequestsLoaded(companyId){
+  const c = state.clients[companyId];
+  if(!c || c.leaveRequestsLoaded) return;
+  const { data: leaveRequests } = await sb.from('leave_requests').select('*').eq('company_id', companyId).order('start_date', { ascending: false });
+  c.leaveRequests = (leaveRequests||[]).map(l => ({
+    id: l.id, employeeId: l.employee_id, leaveType: l.leave_type, startDate: l.start_date, endDate: l.end_date,
+    days: l.days, status: l.status, notes: l.notes||''
+  }));
+  c.leaveRequestsLoaded = true;
+}
+async function ensureAuditLogLoaded(companyId){
+  const c = state.clients[companyId];
+  if(!c || c.auditLogLoaded) return;
+  const { data: auditLog } = await sb.from('audit_log').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).limit(50);
+  c.auditLog = (auditLog||[]).map(a => ({ id: a.id, userEmail: a.user_email, action: a.action, details: a.details, createdAt: a.created_at }));
+  c.auditLogLoaded = true;
 }
 async function loadRates(){
   const { data: userData } = await sb.auth.getUser();
@@ -1006,7 +1056,8 @@ function removeBonusItem(empId, idx){
   openDrawer(empId);
 }
 
-function generatePayslipPDF(empId){
+async function generatePayslipPDF(empId){
+  await ensurePdfLibsLoaded();
   const c = state.clients[state.activeClient];
   const emp = c.employees.find(e => e.id === empId);
   const r = calcEmployee(emp);
@@ -1122,10 +1173,10 @@ function generatePayslipPDF(empId){
   return { doc, filename: `${(emp.name||'employee').replace(/\s+/g,'_')}_payslip_${c.period||''}.pdf` };
 }
 
-function downloadPayslipPDF(empId){
+async function downloadPayslipPDF(empId){
   const c = state.clients[state.activeClient];
   if(!requireAccess(c)) return;
-  const { doc, filename } = generatePayslipPDF(empId);
+  const { doc, filename } = await generatePayslipPDF(empId);
   doc.save(filename);
 }
 
@@ -1139,7 +1190,7 @@ async function emailPayslip(empId, evt){
     await updateEmployeeField(empId, 'email', addr);
     emp.email = addr;
   }
-  const { doc } = generatePayslipPDF(empId);
+  const { doc } = await generatePayslipPDF(empId);
   const pdfBase64 = doc.output('datauristring').split(',')[1];
   const btn = evt.target;
   const originalText = btn.textContent;
@@ -1174,9 +1225,13 @@ function toggleSettings(){
   state.settingsOpen = !state.settingsOpen;
   render();
 }
-function toggleActivityLog(){
+async function toggleActivityLog(){
   state.activityLogOpen = !state.activityLogOpen;
   render();
+  if(state.activityLogOpen && state.activeClient){
+    await ensureAuditLogLoaded(state.activeClient);
+    render();
+  }
 }
 
 /* ---------------- Multi-user company sharing ----------------
@@ -1631,9 +1686,10 @@ function exportCSV(){
   downloadCSV(rows, `${(c.name||'payroll').replace(/\s+/g,'_')}_payroll_register_${c.period||''}.csv`);
 }
 
-function exportPayrollRegisterPDF(){
+async function exportPayrollRegisterPDF(){
   const c = state.clients[state.activeClient];
   if(!requireAccess(c)) return;
+  await ensurePdfLibsLoaded();
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'pt', format:'a4', orientation:'landscape' });
   const [br, bg, bb] = hexToRgb(c.brandColor || '#B08D57');
@@ -1697,11 +1753,15 @@ function exportPayrollRegisterPDF(){
 /* ---------------- Leave management ---------------- */
 const LEAVE_TYPES = ['Annual Leave','Sick Leave','Maternity Leave','Paternity Leave','Compassionate Leave','Unpaid Leave','Other'];
 
-function switchView(view){
+async function switchView(view){
   const c = state.clients[state.activeClient];
   if(!c) return;
   c.view = view;
   render();
+  if(view === 'leave'){
+    await ensureLeaveRequestsLoaded(state.activeClient);
+    render();
+  }
 }
 
 function daysBetween(startDate, endDate){
@@ -1882,10 +1942,11 @@ async function downloadAllPayslipsZip(evt){
   btn.textContent = 'Preparing ZIP...'; btn.disabled = true;
 
   try{
+    await ensureZipLibLoaded();
     const zip = new JSZip();
     const usedNames = {};
-    c.employees.forEach(emp => {
-      const { doc, filename } = generatePayslipPDF(emp.id);
+    for(const emp of c.employees){
+      const { doc, filename } = await generatePayslipPDF(emp.id);
       // Guard against duplicate filenames (e.g. two employees with the same name)
       let finalName = filename;
       if(usedNames[finalName]){
@@ -1895,7 +1956,7 @@ async function downloadAllPayslipsZip(evt){
         usedNames[finalName] = 1;
       }
       zip.file(finalName, doc.output('blob'));
-    });
+    }
     const content = await zip.generateAsync({ type:'blob' });
     const url = URL.createObjectURL(content);
     const a = document.createElement('a');
@@ -1929,7 +1990,7 @@ async function emailAllPayslips(evt){
     btn.textContent = `Sending... (${sent + failed.length + 1}/${targets.length})`;
     btn.disabled = true;
     try{
-      const { doc } = generatePayslipPDF(emp.id);
+      const { doc } = await generatePayslipPDF(emp.id);
       const pdfBase64 = doc.output('datauristring').split(',')[1];
       const { error } = await sb.functions.invoke('send-payslip', {
         body: { to: emp.email, employeeName: emp.name, companyName: c.name, period: c.period, pdfBase64 }
