@@ -366,7 +366,7 @@ async function ensureZipLibLoaded(){
   await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
 }
 
-let state = { clients: {}, activeClient: null, settingsOpen: false, currentUserId: null };
+let state = { clients: {}, activeClient: null, currentUserId: null };
 let employeeRowLimit = parseInt(localStorage.getItem('employeeRowLimit')) || 5;
 
 const EMP_TABLE_COLS = [
@@ -1241,8 +1241,7 @@ async function emailPayslip(empId, evt){
 }
 
 function toggleSettings(){
-  state.settingsOpen = !state.settingsOpen;
-  render();
+  openPanel(renderSettings());
 }
 function openPanel(html){
   document.getElementById('panelContent').innerHTML = html;
@@ -1345,6 +1344,7 @@ function updateRate(key, value){
   RATES[key] = parseFloat(value) || 0;
   saveRates();
   render();
+  openPanel(renderSettings());
 }
 function openDrawer(empId){
   const c = state.clients[state.activeClient];
@@ -2285,8 +2285,6 @@ function renderMain(){
           style="width:100%;accent-color:var(--gold);" />
       </div>` : ''}
     </div>
-
-    ${state.settingsOpen ? renderSettings() : ''}
 
 
     <div class="summary">
