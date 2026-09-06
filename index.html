@@ -743,6 +743,10 @@ async function addClient(){
     alert('Could not confirm your login session. Try signing out and back in.');
     return;
   }
+  if(!userData.user.email_confirmed_at){
+    alert('Please confirm your email address before adding a client — check your inbox for the confirmation link we sent when you signed up. Contact us if you need it resent.');
+    return;
+  }
   // Generate the ID ourselves and insert plainly, without asking Supabase to hand the row
   // back in the same request. Chaining .select() after .insert() requires the SELECT policy
   // to succeed for a row that's a split second old, which can behave unreliably — this avoids
@@ -2432,6 +2436,9 @@ function renderMain(){
   `;
 }
 
+let adminDataCache = null;
+let adminFilterEmail = '';
+
 async function openPlatformAdminPanel(){
   if(!state.isPlatformAdmin){ alert('Not authorized.'); return; }
   openPanel(`<div class="settings-panel"><div style="color:var(--muted);font-size:13px;">Loading platform stats…</div></div>`);
@@ -2447,9 +2454,20 @@ async function openPlatformAdminPanel(){
     return;
   }
 
-  const s = stats[0] || { total_accounts:0, total_companies:0, paid_companies:0, trial_companies:0 };
-  const companies = companiesList || [];
-  const accounts = accountsList || [];
+  adminDataCache = {
+    stats: stats[0] || { total_accounts:0, total_companies:0, paid_companies:0, trial_companies:0 },
+    companies: companiesList || [],
+    accounts: accountsList || []
+  };
+  adminFilterEmail = '';
+  renderAdminPanelContent();
+}
+
+function renderAdminPanelContent(){
+  if(!adminDataCache) return;
+  const { stats: s, companies, accounts } = adminDataCache;
+  const filteredCompanies = adminFilterEmail ? companies.filter(c => c.owner_email === adminFilterEmail) : companies;
+  const uniqueEmails = [...new Set(accounts.map(a => a.email))].sort();
 
   openPanel(`
     <div class="settings-panel">
@@ -2463,9 +2481,18 @@ async function openPlatformAdminPanel(){
         <div class="card deduct"><div class="label">On trial</div><div class="value">${s.trial_companies}</div></div>
       </div>
 
-      <h3 style="font-size:12px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:8px;">All clients (${companies.length})</h3>
+      <div class="settings-field" style="margin-bottom:14px;">
+        <label>Filter clients by accountant</label>
+        <select onchange="adminFilterEmail=this.value; renderAdminPanelContent();" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:7px 8px;font-size:12.5px;">
+          <option value="">All accountants (${companies.length} clients)</option>
+          ${uniqueEmails.map(e => `<option value="${esc(e)}" ${adminFilterEmail===e?'selected':''}>${esc(e)} (${companies.filter(c=>c.owner_email===e).length})</option>`).join('')}
+        </select>
+      </div>
+
+      <h3 style="font-size:12px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:8px;">${adminFilterEmail ? 'Clients for ' + esc(adminFilterEmail) : 'All clients'} (${filteredCompanies.length})</h3>
       <div style="max-height:220px;overflow-y:auto;margin-bottom:20px;">
-        ${companies.map(c => `
+        ${filteredCompanies.length === 0 ? `<div style="color:var(--muted);font-size:12px;padding:10px 0;">No clients match this filter.</div>` : ''}
+        ${filteredCompanies.map(c => `
           <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;">
             <div>
               <div style="color:var(--ink);">${esc(c.client_name) || 'Untitled Client'}</div>
