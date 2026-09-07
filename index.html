@@ -2868,6 +2868,7 @@ function renderMain(){
 
 let adminDataCache = null;
 let adminFilterEmail = '';
+let adminFilterActivity = '';
 
 async function openPlatformAdminPanel(){
   if(!state.isPlatformAdmin){ alert('Not authorized.'); return; }
@@ -2890,47 +2891,98 @@ async function openPlatformAdminPanel(){
     accounts: accountsList || []
   };
   adminFilterEmail = '';
+  adminFilterActivity = '';
+  renderAdminPanelContent();
+}
+
+function clientActivityStatus(lastPayrollRun){
+  if(!lastPayrollRun) return 'Dormant';
+  const daysSince = (Date.now() - new Date(lastPayrollRun).getTime()) / (1000*60*60*24);
+  if(daysSince <= 7) return 'Live';
+  if(daysSince <= 45) return 'Active';
+  return 'Dormant';
+}
+const ACTIVITY_COLORS = { Live:'#7EC7A0', Active:'#6E9FC7', Dormant:'#C77B6E' };
+
+async function adminTogglePaidStatus(companyId, currentlyPaid, clientName){
+  const verb = currentlyPaid ? 'move back to trial' : 'activate (mark as paid)';
+  if(!confirm(`Are you sure you want to ${verb} "${clientName}"?`)) return;
+  const { error } = await sb.rpc('admin_set_paid_status', { target_company_id: companyId, new_status: !currentlyPaid });
+  if(error){ alert('Could not update: ' + error.message); return; }
+  const c = adminDataCache.companies.find(x => x.id === companyId);
+  if(c) c.is_paid = !currentlyPaid;
+  // If this admin also happens to own/share this exact client locally, keep that view in sync too.
+  const localClient = state.clients[companyId];
+  if(localClient) localClient.isPaid = !currentlyPaid;
   renderAdminPanelContent();
 }
 
 function renderAdminPanelContent(){
   if(!adminDataCache) return;
   const { stats: s, companies, accounts } = adminDataCache;
-  const filteredCompanies = adminFilterEmail ? companies.filter(c => c.owner_email === adminFilterEmail) : companies;
+  let filteredCompanies = adminFilterEmail ? companies.filter(c => c.owner_email === adminFilterEmail) : companies;
+  if(adminFilterActivity) filteredCompanies = filteredCompanies.filter(c => clientActivityStatus(c.last_payroll_run) === adminFilterActivity);
   const uniqueEmails = [...new Set(accounts.map(a => a.email))].sort();
+  const activityCounts = { Live:0, Active:0, Dormant:0 };
+  companies.forEach(c => activityCounts[clientActivityStatus(c.last_payroll_run)]++);
 
   openPanel(`
     <div class="settings-panel">
       <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:4px;">Platform Admin</h3>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px;">Visible only to you — enforced by the database, not just this screen.</div>
 
-      <div class="summary" style="margin-bottom:20px;">
+      <div class="summary" style="margin-bottom:12px;">
         <div class="card"><div class="label">Total accounts</div><div class="value">${s.total_accounts}</div></div>
         <div class="card"><div class="label">Total clients</div><div class="value">${s.total_companies}</div></div>
         <div class="card accent"><div class="label">Paid</div><div class="value">${s.paid_companies}</div></div>
         <div class="card deduct"><div class="label">On trial</div><div class="value">${s.trial_companies}</div></div>
       </div>
 
-      <div class="settings-field" style="margin-bottom:14px;">
-        <label>Filter clients by accountant</label>
-        <select onchange="adminFilterEmail=this.value; renderAdminPanelContent();" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:7px 8px;font-size:12.5px;">
-          <option value="">All accountants (${companies.length} clients)</option>
-          ${uniqueEmails.map(e => `<option value="${esc(e)}" ${adminFilterEmail===e?'selected':''}>${esc(e)} (${companies.filter(c=>c.owner_email===e).length})</option>`).join('')}
-        </select>
+      <div class="summary" style="margin-bottom:20px;">
+        <div class="card" style="border-color:${ACTIVITY_COLORS.Live};"><div class="label">Live (7 days)</div><div class="value" style="color:${ACTIVITY_COLORS.Live};">${activityCounts.Live}</div></div>
+        <div class="card" style="border-color:${ACTIVITY_COLORS.Active};"><div class="label">Active (45 days)</div><div class="value" style="color:${ACTIVITY_COLORS.Active};">${activityCounts.Active}</div></div>
+        <div class="card" style="border-color:${ACTIVITY_COLORS.Dormant};"><div class="label">Dormant</div><div class="value" style="color:${ACTIVITY_COLORS.Dormant};">${activityCounts.Dormant}</div></div>
       </div>
 
-      <h3 style="font-size:12px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:8px;">${adminFilterEmail ? 'Clients for ' + esc(adminFilterEmail) : 'All clients'} (${filteredCompanies.length})</h3>
-      <div style="max-height:220px;overflow-y:auto;margin-bottom:20px;">
+      <div style="display:flex;gap:10px;margin-bottom:14px;">
+        <div class="settings-field" style="flex:1;">
+          <label>Filter by accountant</label>
+          <select onchange="adminFilterEmail=this.value; renderAdminPanelContent();" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:7px 8px;font-size:12.5px;">
+            <option value="">All accountants (${companies.length})</option>
+            ${uniqueEmails.map(e => `<option value="${esc(e)}" ${adminFilterEmail===e?'selected':''}>${esc(e)} (${companies.filter(c=>c.owner_email===e).length})</option>`).join('')}
+          </select>
+        </div>
+        <div class="settings-field" style="flex:1;">
+          <label>Filter by activity</label>
+          <select onchange="adminFilterActivity=this.value; renderAdminPanelContent();" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:7px 8px;font-size:12.5px;">
+            <option value="">All (${companies.length})</option>
+            <option value="Live" ${adminFilterActivity==='Live'?'selected':''}>Live (${activityCounts.Live})</option>
+            <option value="Active" ${adminFilterActivity==='Active'?'selected':''}>Active (${activityCounts.Active})</option>
+            <option value="Dormant" ${adminFilterActivity==='Dormant'?'selected':''}>Dormant (${activityCounts.Dormant})</option>
+          </select>
+        </div>
+      </div>
+
+      <h3 style="font-size:12px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:8px;">Clients (${filteredCompanies.length})</h3>
+      <div style="max-height:320px;overflow-y:auto;margin-bottom:20px;">
         ${filteredCompanies.length === 0 ? `<div style="color:var(--muted);font-size:12px;padding:10px 0;">No clients match this filter.</div>` : ''}
-        ${filteredCompanies.map(c => `
-          <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;">
-            <div>
-              <div style="color:var(--ink);">${esc(c.client_name) || 'Untitled Client'}</div>
-              <div style="color:var(--muted);font-size:11px;">${esc(c.owner_email)}</div>
+        ${filteredCompanies.map(c => {
+          const status = clientActivityStatus(c.last_payroll_run);
+          return `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;">
+            <div style="min-width:0;">
+              <div style="color:var(--ink);display:flex;align-items:center;gap:6px;">
+                ${esc(c.client_name) || 'Untitled Client'}
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:${ACTIVITY_COLORS[status]}22;color:${ACTIVITY_COLORS[status]};">${status}</span>
+              </div>
+              <div style="color:var(--muted);font-size:11px;">${esc(c.owner_email)}${c.last_payroll_run ? ' · last payroll ' + new Date(c.last_payroll_run).toLocaleDateString('en-KE') : ' · no payroll run yet'}</div>
             </div>
-            <span style="color:${c.is_paid ? 'var(--gold)' : '#C77B6E'};white-space:nowrap;">${c.is_paid ? 'Paid' : 'Trial'}</span>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+              <span style="color:${c.is_paid ? 'var(--gold)' : '#C77B6E'};white-space:nowrap;">${c.is_paid ? 'Paid' : 'Trial'}</span>
+              <button class="btn" style="font-size:10.5px;padding:4px 8px;" onclick="adminTogglePaidStatus('${c.id}', ${c.is_paid}, '${esc(c.client_name).replace(/'/g,"\\'")}')">${c.is_paid ? 'Move to trial' : 'Activate'}</button>
+            </div>
           </div>
-        `).join('')}
+        `}).join('')}
       </div>
 
       <h3 style="font-size:12px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:8px;">All accounts (${accounts.length})</h3>
