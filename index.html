@@ -984,11 +984,10 @@ function hasRealClientName(c){
    small accounts (<=3 employees) can continue indefinitely on the free tier with its real
    limits (no branding, no payslip email); anything larger must be marked paid. ------------- */
 const PRICING_TIERS = [
-  { name:'Micro', min:0, max:3, price:600, note:'Full features' },
-  { name:'Starter', min:4, max:10, price:1000, note:'Full features' },
-  { name:'Growth', min:11, max:30, price:2500, note:'Full features' },
-  { name:'Business', min:31, max:60, price:4800, note:'Full features' },
-  { name:'Enterprise', min:61, max:Infinity, price:null, note:'KES 4,800 + KES 60/employee beyond 60 — full features' }
+  { name:'Free', min:0, max:3, price:0, note:'Full features' },
+  { name:'Starter', min:4, max:15, price:800, note:'Full features' },
+  { name:'Growth', min:16, max:50, price:2200, note:'Full features' },
+  { name:'Enterprise', min:51, max:Infinity, price:null, note:'KES 2,200 + KES 20/employee beyond 50 — full features' }
 ];
 function getTierForCount(count){
   return PRICING_TIERS.find(t => count >= t.min && count <= t.max) || PRICING_TIERS[PRICING_TIERS.length-1];
@@ -2710,12 +2709,68 @@ function renderDashboardView(main, c){
   `;
 }
 
-function subscribeToTier(tierName, clientName){
+const KENYA_COUNTIES = ['Mombasa','Kwale','Kilifi','Tana River','Lamu','Taita-Taveta','Garissa','Wajir','Mandera',
+  'Marsabit','Isiolo','Meru','Tharaka-Nithi','Embu','Kitui','Machakos','Makueni','Nyandarua','Nyeri','Kirinyaga',
+  "Murang'a",'Kiambu','Turkana','West Pokot','Samburu','Trans Nzoia','Uasin Gishu','Elgeyo-Marakwet','Nandi',
+  'Baringo','Laikipia','Nakuru','Narok','Kajiado','Kericho','Bomet','Kakamega','Vihiga','Bungoma','Busia',
+  'Siaya','Kisumu','Homa Bay','Migori','Kisii','Nyamira','Nairobi'];
+
+function subscribeToTier(tierName){
+  const c = state.clients[state.activeClient];
   const tier = PRICING_TIERS.find(t => t.name === tierName);
+  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
   const priceText = tier.price === null ? tier.note : (tier.price === 0 ? 'Free' : `KES ${fmt(tier.price)}/month`);
-  const subject = encodeURIComponent(`Subscription request: ${clientName} — ${tierName} plan`);
-  const body = encodeURIComponent(`Hi,\n\nI'd like to subscribe "${clientName}" to the ${tierName} plan (${priceText}).\n\nAccount email: ${state.currentUserEmail || ''}\n\nPlease let me know the next step to complete payment and activate this plan.`);
-  window.location.href = `mailto:hello@finlensafrica.com?subject=${subject}&body=${body}`;
+
+  openPanel(`
+    <div class="settings-panel">
+      <h3 style="font-size:14px;color:var(--gold);font-family:'Fraunces',serif;font-weight:600;margin-bottom:4px;">Subscribe — ${esc(tierName)} plan</h3>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:18px;">${priceText} for ${esc(c.name)}. We'll be in touch to confirm payment and activate this plan.</div>
+      <form onsubmit="submitSubscriptionRequest(event, '${esc(tierName)}')">
+        <div class="settings-grid">
+          <div class="settings-field"><label>Company / Organization</label><input value="${esc(c.name)}" disabled style="opacity:0.7;"/></div>
+          <div class="settings-field"><label>No. of employees</label><input value="${activeCount}" disabled style="opacity:0.7;"/></div>
+          <div class="settings-field"><label>First name</label><input name="firstName" required/></div>
+          <div class="settings-field"><label>Last name</label><input name="lastName" required/></div>
+          <div class="settings-field"><label>Email</label><input type="email" name="email" required value="${esc(state.currentUserEmail||'')}"/></div>
+          <div class="settings-field"><label>Phone</label><input type="tel" name="phone" required placeholder="07XX XXX XXX"/></div>
+          <div class="settings-field">
+            <label>County</label>
+            <select name="county" required style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:7px 8px;font-size:12.5px;">
+              <option value="">Select County</option>
+              ${KENYA_COUNTIES.map(county => `<option>${county}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:11.5px;color:var(--muted);margin-top:14px;">
+          <input type="checkbox" name="tosAgree" required style="margin-top:2px;accent-color:var(--gold);"/>
+          I have read and understood Finlens Africa's Terms of Service
+        </label>
+        <button class="btn primary" type="submit" style="margin-top:16px;width:100%;">Submit</button>
+      </form>
+    </div>
+  `);
+}
+
+async function submitSubscriptionRequest(evt, tierName){
+  evt.preventDefault();
+  const c = state.clients[state.activeClient];
+  const form = evt.target;
+  const firstName = form.firstName.value.trim();
+  const lastName = form.lastName.value.trim();
+  const email = form.email.value.trim();
+  const phone = form.phone.value.trim();
+  const county = form.county.value;
+
+  if(!firstName || !lastName || !email || !phone || !county){ alert('Please fill in every field.'); return; }
+
+  const { error } = await sb.from('subscription_requests').insert({
+    company_id: state.activeClient, requested_tier: tierName,
+    first_name: firstName, last_name: lastName, email, phone, county
+  });
+  if(error){ alert('Could not submit your request: ' + error.message); return; }
+
+  closePanel();
+  alert(`Thanks, ${firstName} — your request to subscribe "${c.name}" to the ${tierName} plan has been submitted. We'll be in touch shortly to confirm payment and activate it.`);
 }
 
 function renderPricingView(main, c){
@@ -2750,12 +2805,12 @@ function renderPricingView(main, c){
           <div style="font-family:'Fraunces',serif;font-size:18px;color:var(--ink);margin-bottom:4px;">${t.name}</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">${t.max===Infinity ? t.min+'+' : t.min+'–'+t.max} employees</div>
           <div style="font-family:'JetBrains Mono',monospace;font-size:22px;color:${isCurrent?'var(--gold)':'var(--ink)'};margin-bottom:10px;">
-            ${t.price === null ? 'From KES 4,800' : t.price === 0 ? 'Free' : 'KES ' + fmt(t.price)}
+            ${t.price === null ? 'From KES 2,200' : t.price === 0 ? 'Free' : 'KES ' + fmt(t.price)}
             ${t.price !== null && t.price > 0 ? `<span style="font-size:11px;color:var(--muted);font-family:'Inter',sans-serif;">/month</span>` : ''}
           </div>
           <div style="font-size:12px;color:var(--muted);line-height:1.5;">${esc(t.note)}</div>
           ${isCurrent ? `<div style="margin-top:14px;font-size:11px;color:var(--gold);font-weight:600;">CURRENT TIER</div>` : `
-          <button class="btn primary" style="margin-top:14px;width:100%;font-size:12px;" onclick="subscribeToTier('${esc(t.name)}', '${esc(c.name).replace(/'/g,"\\'")}')">Subscribe</button>
+          <button class="btn primary" style="margin-top:14px;width:100%;font-size:12px;" onclick="subscribeToTier('${esc(t.name)}')">Subscribe</button>
           `}
         </div>
       `}).join('')}
