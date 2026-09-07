@@ -262,6 +262,7 @@
       <button class="rail-btn" onclick="toggleSharePanel()">Share &amp; access</button>
       <button class="rail-btn" id="adminBtn" style="display:none;color:var(--gold);" onclick="openPlatformAdminPanel()">Platform Admin</button>
       <button class="rail-btn" onclick="handleSignOut()">Sign out</button>
+      <button class="rail-btn" style="color:#C77B6E;font-size:11.5px;" onclick="deleteMyAccount()">Delete my account</button>
       <div class="user-badge" id="userBadge"></div>
     </div>
   </div>
@@ -616,6 +617,31 @@ async function handleSignOut(){
   document.getElementById('authScreen').style.display = 'flex';
 }
 
+async function deleteMyAccount(){
+  // Quick client-side check first, just for fast feedback — the real, unbypassable check
+  // happens server-side in the Edge Function regardless of what this shows.
+  const ownedCount = Object.values(state.clients).filter(c => c.ownerId === state.currentUserId).length;
+  if(ownedCount > 0){
+    alert(`You still own ${ownedCount} client${ownedCount===1?'':'s'}. Delete or hand those off first — deleting your account would permanently delete all of their payroll history too, which can't be undone.`);
+    return;
+  }
+  const typed = prompt('This permanently deletes your login account. This cannot be undone.\n\nType DELETE to confirm:');
+  if(typed === null) return;
+  if(typed.trim() !== 'DELETE'){
+    alert('That did not match. Nothing was deleted.');
+    return;
+  }
+  const { data, error } = await sb.functions.invoke('delete-own-account');
+  if(error || data?.error){
+    alert('Could not delete your account: ' + (data?.error || error.message));
+    return;
+  }
+  alert('Your account has been deleted.');
+  await sb.auth.signOut();
+  document.getElementById('appRoot').style.display = 'none';
+  document.getElementById('authScreen').style.display = 'flex';
+}
+
 /* ---------------- Data layer (Supabase) ---------------- */
 async function fetchAllData(){
   const { data: companies, error } = await sb.from('companies').select('*').order('created_at');
@@ -926,6 +952,21 @@ function hasRealClientName(c){
   const name = (c.name || '').trim().toLowerCase();
   return name.length > 0 && name !== 'untitled client';
 }
+/* ---------------- Pricing tiers — based on active employee count per account, not per client.
+   The free trial is separate from this: it gives FULL access (any tier, any feature) for
+   exactly one payroll cycle. Only after that cycle is used does the tier system take over —
+   small accounts (<=3 employees) can continue indefinitely on the free tier with its real
+   limits (no branding, no payslip email); anything larger must be marked paid. ------------- */
+const PRICING_TIERS = [
+  { name:'Micro', min:0, max:3, price:600, note:'Full features' },
+  { name:'Starter', min:4, max:10, price:1000, note:'Full features' },
+  { name:'Growth', min:11, max:30, price:2500, note:'Full features' },
+  { name:'Business', min:31, max:60, price:4800, note:'Full features' },
+  { name:'Enterprise', min:61, max:Infinity, price:null, note:'KES 4,800 + KES 60/employee beyond 60 — full features' }
+];
+function getTierForCount(count){
+  return PRICING_TIERS.find(t => count >= t.min && count <= t.max) || PRICING_TIERS[PRICING_TIERS.length-1];
+}
 function requireAccess(c){
   if(!hasRealClientName(c)){
     alert('Give this client a real name (top of the page) before running payroll for them — "Untitled Client" can\'t be used for anything beyond initial setup.');
@@ -936,10 +977,15 @@ function requireAccess(c){
   if(!c.trialPeriodUsed){
     c.trialPeriodUsed = currentPeriod;
     sb.from('companies').update({ trial_period_used: currentPeriod }).eq('id', state.activeClient);
-    return true;
+    return true; // trial: full access, any tier, for this one cycle
   }
-  if(c.trialPeriodUsed === currentPeriod) return true;
-  alert(`This client's free payroll cycle (${c.trialPeriodUsed}) has already been used.\n\nTo run payroll for ${currentPeriod}, mark this client as paid first (button next to their name).`);
+  if(c.trialPeriodUsed === currentPeriod) return true; // still within that same trial cycle
+
+  // Trial is used up and this account isn't paid — every tier is now a paid tier, so this
+  // blocks regardless of size, same rule for a 2-employee account as a 200-employee one.
+  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
+  const tier = getTierForCount(activeCount);
+  alert(`This client's free payroll cycle (${c.trialPeriodUsed}) has already been used. With ${activeCount} employee${activeCount===1?'':'s'}, this account needs the ${tier.name} plan (${tier.price ? 'KES '+fmt(tier.price)+'/month' : tier.note}) to continue. See the Pricing tab, then contact us to activate — or mark this client as paid if it's already arranged.`);
   return false;
 }
 async function markClientPaid(){
@@ -2121,6 +2167,7 @@ function viewTabsHtml(c){
       ${tab('payroll', 'Payroll')}
       ${tab('wages', 'Wages')}
       ${tab('leave', 'Leave Management')}
+      ${tab('pricing', 'Pricing')}
     </div>
   `;
 }
@@ -2637,6 +2684,53 @@ function renderDashboardView(main, c){
   `;
 }
 
+function renderPricingView(main, c){
+  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
+  const currentTier = getTierForCount(activeCount);
+  const trialExhausted = !c.isPaid && c.trialPeriodUsed && c.trialPeriodUsed !== (c.period||'');
+  const inTrial = !c.isPaid && (!c.trialPeriodUsed || c.trialPeriodUsed === (c.period||''));
+
+  main.innerHTML = `
+    ${viewTabsHtml(c)}
+    <div class="topbar">
+      <h2 style="font-family:'Fraunces',serif;font-weight:500;font-size:24px;margin:0;">Pricing</h2>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:20px;max-width:640px;">
+      Priced per account, by total active employee count — not per client company. Your free trial gives full access to every feature for one complete payroll cycle, regardless of size. After that, every account needs a paid plan to keep running payroll — pricing scales down per employee as you grow, never up.
+    </div>
+
+    <div style="margin-bottom:20px;padding:14px 16px;border-radius:6px;background:${inTrial ? 'rgba(176,141,87,0.12)' : (c.isPaid ? 'rgba(126,199,160,0.12)' : 'rgba(199,123,110,0.12)')};border:1px solid ${inTrial ? 'rgba(176,141,87,0.4)' : (c.isPaid ? 'rgba(126,199,160,0.4)' : 'rgba(199,123,110,0.4)')};font-size:13px;">
+      ${inTrial
+        ? `✨ <strong>${esc(c.name)}</strong> is on its free trial cycle — full access to every feature, any employee count, for this one payroll period.`
+        : c.isPaid
+          ? `<strong>${esc(c.name)}</strong> is Active (paid) — full access, currently ${activeCount} active employee${activeCount===1?'':'s'} (maps to the <strong>${currentTier.name}</strong> tier by headcount).`
+          : `<strong>${esc(c.name)}</strong> has ${activeCount} active employee${activeCount===1?'':'s'} — the <strong>${currentTier.name}</strong> plan (${currentTier.price ? 'KES '+fmt(currentTier.price)+'/month' : currentTier.note}) applies. ${trialExhausted ? 'The free trial cycle has been used — this account needs to be marked paid to continue running payroll.' : ''}`
+      }
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;">
+      ${PRICING_TIERS.map(t => {
+        const isCurrent = !inTrial && !c.isPaid && t.name === currentTier.name;
+        return `
+        <div style="background:var(--panel);border:1px solid ${isCurrent ? 'var(--gold)' : 'var(--line)'};border-radius:8px;padding:20px 18px;${isCurrent ? 'box-shadow:0 0 0 1px var(--gold);' : ''}">
+          <div style="font-family:'Fraunces',serif;font-size:18px;color:var(--ink);margin-bottom:4px;">${t.name}</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">${t.max===Infinity ? t.min+'+' : t.min+'–'+t.max} employees</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:22px;color:${isCurrent?'var(--gold)':'var(--ink)'};margin-bottom:10px;">
+            ${t.price === null ? 'From KES 4,800' : t.price === 0 ? 'Free' : 'KES ' + fmt(t.price)}
+            ${t.price !== null && t.price > 0 ? `<span style="font-size:11px;color:var(--muted);font-family:'Inter',sans-serif;">/month</span>` : ''}
+          </div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.5;">${esc(t.note)}</div>
+          ${isCurrent ? `<div style="margin-top:14px;font-size:11px;color:var(--gold);font-weight:600;">CURRENT TIER</div>` : ''}
+        </div>
+      `}).join('')}
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);margin-top:20px;">
+      To upgrade a client's plan, contact Finlens Africa — activation is confirmed by your admin once payment is arranged.
+    </div>
+  `;
+}
+
 function renderMain(){
   const main = document.getElementById('mainArea');
   const c = state.clients[state.activeClient];
@@ -2645,6 +2739,7 @@ function renderMain(){
   if(c.view === 'leave'){ renderLeaveView(main, c); return; }
   if(c.view === 'wages'){ renderWagesView(main, c); return; }
   if(c.view === 'dashboard'){ renderDashboardView(main, c); return; }
+  if(c.view === 'pricing'){ renderPricingView(main, c); return; }
 
   const results = c.employees.map(e => ({ e, r: calcEmployee(e) }));
   const visibleResults = showAllEmployees ? results : results.slice(0, employeeRowLimit);
