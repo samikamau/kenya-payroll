@@ -1001,9 +1001,8 @@ function hasRealClientName(c){
    limits (no branding, no payslip email); anything larger must be marked paid. ------------- */
 const PRICING_TIERS = [
   { name:'Free', min:0, max:3, price:0, note:'Full features' },
-  { name:'Starter', min:4, max:15, price:800, note:'Full features' },
-  { name:'Growth', min:16, max:50, price:2200, note:'Full features' },
-  { name:'Enterprise', min:51, max:Infinity, price:null, note:'KES 2,200 + KES 20/employee beyond 50 — full features' }
+  { name:'Starter', min:4, max:15, price:1000, note:'Full features' },
+  { name:'Enterprise', min:16, max:Infinity, price:null, note:'KES 1,000 + KES 50/employee beyond 15 — full features' }
 ];
 function getTierForCount(count){
   return PRICING_TIERS.find(t => count >= t.min && count <= t.max) || PRICING_TIERS[PRICING_TIERS.length-1];
@@ -2733,11 +2732,28 @@ const KENYA_COUNTIES = ['Mombasa','Kwale','Kilifi','Tana River','Lamu','Taita-Ta
   'Baringo','Laikipia','Nakuru','Narok','Kajiado','Kericho','Bomet','Kakamega','Vihiga','Bungoma','Busia',
   'Siaya','Kisumu','Homa Bay','Migori','Kisii','Nyamira','Nairobi'];
 
-function subscribeToTier(tierName){
+async function subscribeToTier(tierName){
   const c = state.clients[state.activeClient];
   const tier = PRICING_TIERS.find(t => t.name === tierName);
   const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
   const priceText = tier.price === null ? tier.note : (tier.price === 0 ? 'Free' : `KES ${fmt(tier.price)}/month`);
+
+  if(c.isPaid){
+    // Already subscribed once before — an upgrade/downgrade just changes the plan, no need
+    // to re-collect contact details that were already captured on first subscription.
+    if(!confirm(`Switch "${c.name}" to the ${tierName} plan (${priceText})?`)) return;
+    const { data: lastRequest } = await sb.from('subscription_requests').select('*').eq('company_id', state.activeClient).order('created_at', { ascending:false }).limit(1).maybeSingle();
+    const { error } = await sb.rpc('submit_subscription_and_activate', {
+      p_company_id: state.activeClient, p_tier: tierName,
+      p_first_name: lastRequest?.first_name || '', p_last_name: lastRequest?.last_name || '',
+      p_email: lastRequest?.email || state.currentUserEmail || '', p_phone: lastRequest?.phone || '', p_county: lastRequest?.county || ''
+    });
+    if(error){ alert('Could not switch plans: ' + error.message); return; }
+    logAudit('Plan changed', `Switched to ${tierName} plan`);
+    alert(`"${c.name}" is now on the ${tierName} plan.`);
+    renderPricingView(document.getElementById('mainArea'), c);
+    return;
+  }
 
   openPanel(`
     <div class="settings-panel">
@@ -2832,7 +2848,7 @@ function renderPricingView(main, c){
           <div style="font-family:'Fraunces',serif;font-size:18px;color:var(--ink);margin-bottom:4px;">${t.name}</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">${t.max===Infinity ? t.min+'+' : t.min+'–'+t.max} employees</div>
           <div style="font-family:'JetBrains Mono',monospace;font-size:22px;color:${isCurrent?'var(--gold)':'var(--ink)'};margin-bottom:10px;">
-            ${t.price === null ? 'From KES 2,200' : t.price === 0 ? 'Free' : 'KES ' + fmt(t.price)}
+            ${t.price === null ? 'From KES 1,000' : t.price === 0 ? 'Free' : 'KES ' + fmt(t.price)}
             ${t.price !== null && t.price > 0 ? `<span style="font-size:11px;color:var(--muted);font-family:'Inter',sans-serif;">/month</span>` : ''}
           </div>
           <div style="font-size:12px;color:var(--muted);line-height:1.5;">${esc(t.note)}</div>
