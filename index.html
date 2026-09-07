@@ -2524,9 +2524,11 @@ function svgDonutChart(segments, size){
 function donutLegend(segments){
   const total = segments.reduce((s,seg) => s + seg.value, 0);
   return segments.filter(s => s.value > 0).map(s => `
-    <div class="composition-legend-item">
-      <span class="composition-swatch" style="background:${s.color};"></span>
-      ${esc(s.label)}: ${fmt(s.value)} <span style="color:var(--muted);">(${total>0 ? (s.value/total*100).toFixed(1) : '0'}%)</span>
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;">
+      <span class="composition-swatch" style="background:${s.color};flex-shrink:0;"></span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);" title="${esc(s.label)}">${esc(s.label)}</span>
+      <span class="mono" style="flex-shrink:0;width:64px;text-align:right;color:var(--ink);">${fmt(s.value)}</span>
+      <span class="mono" style="flex-shrink:0;width:44px;text-align:right;color:var(--muted);font-size:11px;">${total>0 ? (s.value/total*100).toFixed(1) : '0'}%</span>
     </div>
   `).join('');
 }
@@ -2580,7 +2582,7 @@ function renderDashboardView(main, c){
       <div class="card"><div class="label">Leave utilization</div><div class="value">${leaveUtilizationPct.toFixed(0)}%</div></div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 400px));gap:16px;margin-bottom:24px;justify-content:center;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 440px));gap:16px;margin-bottom:24px;justify-content:center;">
       <div class="composition-wrap" style="margin-bottom:0;">
         <div style="font-size:11px;color:var(--muted);margin-bottom:12px;text-align:center;">PAYROLL COMPOSITION</div>
         <div style="display:flex;align-items:center;justify-content:center;gap:18px;">
@@ -2592,7 +2594,7 @@ function renderDashboardView(main, c){
             { label:'Housing Levy', value: payrollTotals.ahl, color:'#C7B26E' },
             { label:'Other ded.', value: payrollTotals.other, color:'#8A7EC7' }
           ])}
-          <div style="flex:0 1 160px;min-width:0;">${donutLegend([
+          <div style="flex:0 1 230px;min-width:0;">${donutLegend([
             { label:'Net pay', value: payrollTotals.net, color:'#B08D57' },
             { label:'PAYE', value: payrollTotals.paye, color:'#C77B6E' },
             { label:'NSSF', value: payrollTotals.nssf, color:'#6E9FC7' },
@@ -2607,7 +2609,7 @@ function renderDashboardView(main, c){
         <div style="font-size:11px;color:var(--muted);margin-bottom:12px;text-align:center;">WAGES BY PAYMENT METHOD</div>
         <div style="display:flex;align-items:center;justify-content:center;gap:18px;">
           ${svgDonutChart(wagesByMethod)}
-          <div style="flex:0 1 160px;min-width:0;">${donutLegend(wagesByMethod)}</div>
+          <div style="flex:0 1 230px;min-width:0;">${donutLegend(wagesByMethod)}</div>
         </div>
       </div>
 
@@ -2619,7 +2621,7 @@ function renderDashboardView(main, c){
             { label:'Pending', value: c.leaveRequests.filter(l=>l.status==='Pending').length, color:'#6E9FC7' },
             { label:'Rejected', value: c.leaveRequests.filter(l=>l.status==='Rejected').length, color:'#C77B6E' }
           ])}
-          <div style="flex:0 1 160px;min-width:0;">${donutLegend([
+          <div style="flex:0 1 230px;min-width:0;">${donutLegend([
             { label:'Approved', value: c.leaveRequests.filter(l=>l.status==='Approved').length, color:'#B08D57' },
             { label:'Pending', value: c.leaveRequests.filter(l=>l.status==='Pending').length, color:'#6E9FC7' },
             { label:'Rejected', value: c.leaveRequests.filter(l=>l.status==='Rejected').length, color:'#C77B6E' }
