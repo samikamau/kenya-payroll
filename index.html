@@ -469,7 +469,7 @@ const EMP_DB_FIELD = { name:'name', pin:'pin', idNumber:'id_number', nssfNo:'nss
                         overtimePay:'overtime_pay', bonusItems:'bonus_items' };
 const CLIENT_DB_FIELD = { name:'name', period:'period', kraPin:'kra_pin', nssfEmployerNo:'nssf_employer_no', shaEmployerNo:'sha_employer_no',
                            brandColor:'brand_color', logoDataUrl:'logo_data_url', logoSize:'logo_size', logoAspect:'logo_aspect',
-                           isPaid:'is_paid', trialPeriodUsed:'trial_period_used' };
+                           isPaid:'is_paid', trialPeriodUsed:'trial_period_used', phone:'phone' };
 
 function hexToRgb(hex){
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((hex||'').trim());
@@ -630,6 +630,7 @@ function openCompanyProfilePanel(){
         <div class="settings-field"><label>Employer KRA PIN</label><input value="${esc(c.kraPin)}" placeholder="P0..." onchange="updateClientField('kraPin', this.value)"/></div>
         <div class="settings-field"><label>NSSF employer number</label><input value="${esc(c.nssfEmployerNo)}" onchange="updateClientField('nssfEmployerNo', this.value)"/></div>
         <div class="settings-field"><label>SHA employer number</label><input value="${esc(c.shaEmployerNo)}" onchange="updateClientField('shaEmployerNo', this.value)"/></div>
+        <div class="settings-field"><label>Telephone number</label><input type="tel" value="${esc(c.phone)}" placeholder="07XX XXX XXX" onchange="updateClientField('phone', this.value)"/></div>
         <div class="settings-field"><label>Brand color (on payslip PDFs)</label>
           <div style="display:flex;gap:8px;align-items:center;">
             <input type="color" value="${c.brandColor||'#B08D57'}" style="width:40px;height:32px;padding:2px;background:var(--bg);border:1px solid var(--line);border-radius:4px;" onchange="updateClientField('brandColor', this.value); openCompanyProfilePanel()"/>
@@ -725,7 +726,7 @@ async function fetchAllData(){
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
       brandColor: c.brand_color || '#B08D57', logoDataUrl: c.logo_data_url || '',
       logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
-      isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null, subscribedTier: c.subscribed_tier || null,
+      isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null, subscribedTier: c.subscribed_tier || null, phone: c.phone || '',
       view: 'pricing',
       auditLog: [], auditLogLoaded: false,
       leaveRequests: [], leaveRequestsLoaded: false,
@@ -898,7 +899,7 @@ async function submitNewClient(evt){
   if(error){ alert(error.message); return; }
   state.clients[newId] = { name: cleanName, period:'', kraPin, nssfEmployerNo, shaEmployerNo, ownerId: userData.user.id,
                             brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
-                            isPaid:false, trialPeriodUsed:null, subscribedTier:null, view:'pricing', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
+                            isPaid:false, trialPeriodUsed:null, subscribedTier:null, phone:'', view:'pricing', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = newId;
   closePanel();
   render();
@@ -3316,7 +3317,12 @@ function findAndMakeNetlifyBadgeDraggable(){
     ...document.querySelectorAll('[class*="netlify" i]')
   ];
   const badge = candidates.find(el => el.id !== 'scrollFab'); // exclude our own scroll button
-  if(badge) makeDraggable(badge.closest('a') || badge);
+  if(badge){
+    const target = badge.closest('a') || badge;
+    target.style.transform = 'scale(0.6)';
+    target.style.transformOrigin = 'bottom right';
+    makeDraggable(target);
+  }
 }
 window.addEventListener('load', () => setTimeout(findAndMakeNetlifyBadgeDraggable, 1000));
 
