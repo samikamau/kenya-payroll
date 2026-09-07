@@ -680,7 +680,7 @@ async function ensureWagesLoaded(companyId){
   const { data: wages } = await sb.from('wages').select('*').eq('company_id', companyId).order('wage_date', { ascending: false });
   c.wages = (wages||[]).map(w => ({
     id: w.id, date: w.wage_date, fullNames: w.full_names, idNumber: w.id_number,
-    kraPin: w.kra_pin||'', amount: w.amount||0, paymentMethod: w.payment_method||'Cash', voucherNumber: w.voucher_number||''
+    kraPin: w.kra_pin||'', amount: w.amount||0, paymentMethod: w.payment_method||'Cash', voucherNumber: w.voucher_number||'', paymentRefNo: w.payment_ref_no||''
   }));
   c.wagesLoaded = true;
 }
@@ -2240,10 +2240,10 @@ function renderLeaveView(main, c){
    Just a clean, exportable log an accountant can hand over or file independently. ------- */
 const PAYMENT_METHODS = ['Cash','M-Pesa','Bank Transfer'];
 
-const WAGES_IMPORT_HEADERS = ['Date','Full Names','ID Number','KRA PIN','Amount','Payment Method','Voucher Number'];
+const WAGES_IMPORT_HEADERS = ['Date','Full Names','ID Number','KRA PIN','Amount','Payment Method','Voucher Number','Payment Ref No.'];
 function exportWagesImportTemplate(){
   const rows = [WAGES_IMPORT_HEADERS, [
-    '2026-09-05','John Otieno Wanjala','30112233','A012345678Z','1500','Cash','PV-001'
+    '2026-09-05','John Otieno Wanjala','30112233','A012345678Z','1500','Cash','PV-001','QGH4X9K2LM'
   ]];
   downloadCSV(rows, 'wages_import_template.csv');
 }
@@ -2262,11 +2262,11 @@ async function handleWagesCSVImport(event){
   const dataRows = rows.slice(1);
   const fieldMap = {
     'date':'date', 'full names':'fullNames', 'id number':'idNumber', 'kra pin':'kraPin',
-    'amount':'amount', 'payment method':'paymentMethod', 'voucher number':'voucherNumber'
+    'amount':'amount', 'payment method':'paymentMethod', 'voucher number':'voucherNumber', 'payment ref no.':'paymentRefNo'
   };
 
   const newWages = dataRows.map(cells => {
-    const w = { date:'', fullNames:'', idNumber:'', kraPin:'', amount:0, paymentMethod:'Cash', voucherNumber:'' };
+    const w = { date:'', fullNames:'', idNumber:'', kraPin:'', amount:0, paymentMethod:'Cash', voucherNumber:'', paymentRefNo:'' };
     headerRow.forEach((h, i) => {
       const field = fieldMap[h];
       if(!field) return;
@@ -2284,7 +2284,7 @@ async function handleWagesCSVImport(event){
 
   const dbRows = newWages.map(w => ({
     id: crypto.randomUUID(), company_id: state.activeClient, wage_date: w.date, full_names: w.fullNames,
-    id_number: w.idNumber, kra_pin: w.kraPin, amount: w.amount, payment_method: w.paymentMethod || 'Cash', voucher_number: w.voucherNumber
+    id_number: w.idNumber, kra_pin: w.kraPin, amount: w.amount, payment_method: w.paymentMethod || 'Cash', voucher_number: w.voucherNumber, payment_ref_no: w.paymentRefNo
   }));
 
   const { error } = await sb.from('wages').insert(dbRows);
@@ -2293,7 +2293,7 @@ async function handleWagesCSVImport(event){
   dbRows.forEach((row, idx) => {
     c.wages.unshift({ id: row.id, date: newWages[idx].date, fullNames: newWages[idx].fullNames, idNumber: newWages[idx].idNumber,
                        kraPin: newWages[idx].kraPin, amount: newWages[idx].amount, paymentMethod: newWages[idx].paymentMethod || 'Cash',
-                       voucherNumber: newWages[idx].voucherNumber });
+                       voucherNumber: newWages[idx].voucherNumber, paymentRefNo: newWages[idx].paymentRefNo });
   });
   logAudit('Wages imported', `${dbRows.length} entries imported from CSV`);
   render();
@@ -2313,6 +2313,7 @@ async function submitWageEntry(evt){
   const amount = parseFloat(form.amount.value) || 0;
   const paymentMethod = form.paymentMethod.value;
   const voucherNumber = form.voucherNumber.value.trim();
+  const paymentRefNo = form.paymentRefNo.value.trim();
 
   if(!date || !fullNames || !idNumber){ alert('Date, full names, and ID number are required.'); return; }
   if(amount <= 0){ alert('Enter an amount greater than zero.'); return; }
@@ -2320,11 +2321,11 @@ async function submitWageEntry(evt){
   const newId = crypto.randomUUID();
   const { error } = await sb.from('wages').insert({
     id: newId, company_id: state.activeClient, wage_date: date, full_names: fullNames,
-    id_number: idNumber, kra_pin: kraPin, amount, payment_method: paymentMethod, voucher_number: voucherNumber
+    id_number: idNumber, kra_pin: kraPin, amount, payment_method: paymentMethod, voucher_number: voucherNumber, payment_ref_no: paymentRefNo
   });
   if(error){ alert('Could not save wage entry: ' + error.message); return; }
 
-  c.wages.unshift({ id: newId, date, fullNames, idNumber, kraPin, amount, paymentMethod, voucherNumber });
+  c.wages.unshift({ id: newId, date, fullNames, idNumber, kraPin, amount, paymentMethod, voucherNumber, paymentRefNo });
   logAudit('Wage entry added', `${fullNames} — ${fmt(amount)} (${paymentMethod})`);
   form.reset();
   render();
@@ -2349,7 +2350,7 @@ async function downloadWagesExcel(evt){
     await ensureXlsxLibLoaded();
     const rows = c.wages.map(w => ({
       'Date': w.date, 'Full Names': w.fullNames, 'ID Number': w.idNumber,
-      'KRA PIN': w.kraPin, 'Amount': w.amount, 'Payment Method': w.paymentMethod, 'Voucher Number': w.voucherNumber
+      'KRA PIN': w.kraPin, 'Amount': w.amount, 'Payment Method': w.paymentMethod, 'Voucher Number': w.voucherNumber, 'Payment Ref No.': w.paymentRefNo
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
@@ -2387,9 +2388,9 @@ async function downloadWagesPDF(evt){
 
     doc.autoTable({
       startY: y,
-      head: [['Date','Full Names','ID Number','KRA PIN','Amount','Payment Method','Voucher No.']],
-      body: c.wages.map(w => [w.date, w.fullNames, w.idNumber, w.kraPin||'-', fmt(w.amount), w.paymentMethod, w.voucherNumber||'-']),
-      foot: [['', '', '', 'TOTAL', fmt(total), '', '']],
+      head: [['Date','Full Names','ID Number','KRA PIN','Amount','Payment Method','Voucher No.','Payment Ref No.']],
+      body: c.wages.map(w => [w.date, w.fullNames, w.idNumber, w.kraPin||'-', fmt(w.amount), w.paymentMethod, w.voucherNumber||'-', w.paymentRefNo||'-']),
+      foot: [['', '', '', 'TOTAL', fmt(total), '', '', '']],
       margin: { left: 40, right: 40 },
       styles: { fontSize: 8.5, cellPadding: 5 },
       headStyles: { fillColor: [br,bg,bb], textColor: [255,255,255], fontStyle:'bold' },
@@ -2431,6 +2432,7 @@ function renderWagesView(main, c){
           <div class="settings-field"><label>ID Number</label><input name="idNumber" required/></div>
           <div class="settings-field"><label>KRA PIN</label><input name="kraPin"/></div>
           <div class="settings-field"><label>Payment voucher number</label><input name="voucherNumber"/></div>
+          <div class="settings-field"><label>Payment Ref No.</label><input name="paymentRefNo" placeholder="M-Pesa code, bank ref, cheque no."/></div>
           <div class="settings-field"><label>Amount</label><input type="number" name="amount" required min="0" step="0.01"/></div>
           <div class="settings-field"><label>Payment method</label>
             <select name="paymentMethod" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
@@ -2455,10 +2457,10 @@ function renderWagesView(main, c){
     <div class="table-wrap scroll-table">
       <table>
         <thead>
-          <tr><th>Date</th><th>Full Names</th><th>ID Number</th><th>KRA PIN</th><th>Amount</th><th>Payment Method</th><th>Voucher No.</th><th></th></tr>
+          <tr><th>Date</th><th>Full Names</th><th>ID Number</th><th>KRA PIN</th><th>Amount</th><th>Payment Method</th><th>Voucher No.</th><th>Payment Ref No.</th><th></th></tr>
         </thead>
         <tbody>
-          ${c.wages.length === 0 ? `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px;">No wage entries yet.</td></tr>` : ''}
+          ${c.wages.length === 0 ? `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px;">No wage entries yet.</td></tr>` : ''}
           ${c.wages.map(w => `
             <tr>
               <td class="mono">${esc(w.date)}</td>
@@ -2468,6 +2470,7 @@ function renderWagesView(main, c){
               <td class="num">${fmt(w.amount)}</td>
               <td>${esc(w.paymentMethod)}</td>
               <td class="mono">${esc(w.voucherNumber) || '-'}</td>
+              <td class="mono">${esc(w.paymentRefNo) || '-'}</td>
               <td><span class="row-del" style="opacity:.6;" onclick="deleteWageEntry('${w.id}')">&times;</span></td>
             </tr>
           `).join('')}
