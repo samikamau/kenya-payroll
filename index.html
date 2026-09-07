@@ -680,7 +680,7 @@ async function ensureWagesLoaded(companyId){
   const { data: wages } = await sb.from('wages').select('*').eq('company_id', companyId).order('wage_date', { ascending: false });
   c.wages = (wages||[]).map(w => ({
     id: w.id, date: w.wage_date, fullNames: w.full_names, idNumber: w.id_number,
-    kraPin: w.kra_pin||'', amount: w.amount||0, paymentMethod: w.payment_method||'Cash'
+    kraPin: w.kra_pin||'', amount: w.amount||0, paymentMethod: w.payment_method||'Cash', voucherNumber: w.voucher_number||''
   }));
   c.wagesLoaded = true;
 }
@@ -2240,6 +2240,67 @@ function renderLeaveView(main, c){
    Just a clean, exportable log an accountant can hand over or file independently. ------- */
 const PAYMENT_METHODS = ['Cash','M-Pesa','Bank Transfer'];
 
+const WAGES_IMPORT_HEADERS = ['Date','Full Names','ID Number','KRA PIN','Amount','Payment Method','Voucher Number'];
+function exportWagesImportTemplate(){
+  const rows = [WAGES_IMPORT_HEADERS, [
+    '2026-09-05','John Otieno Wanjala','30112233','A012345678Z','1500','Cash','PV-001'
+  ]];
+  downloadCSV(rows, 'wages_import_template.csv');
+}
+
+async function handleWagesCSVImport(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const c = state.clients[state.activeClient];
+  if(!requireAccess(c)){ event.target.value = ''; return; }
+
+  const text = await file.text();
+  const rows = parseCSVText(text);
+  if(rows.length < 2){ alert('That file has no data rows to import.'); event.target.value = ''; return; }
+
+  const headerRow = rows[0].map((h, i) => (i === 0 ? h.replace(/^\uFEFF/, '') : h).trim().toLowerCase());
+  const dataRows = rows.slice(1);
+  const fieldMap = {
+    'date':'date', 'full names':'fullNames', 'id number':'idNumber', 'kra pin':'kraPin',
+    'amount':'amount', 'payment method':'paymentMethod', 'voucher number':'voucherNumber'
+  };
+
+  const newWages = dataRows.map(cells => {
+    const w = { date:'', fullNames:'', idNumber:'', kraPin:'', amount:0, paymentMethod:'Cash', voucherNumber:'' };
+    headerRow.forEach((h, i) => {
+      const field = fieldMap[h];
+      if(!field) return;
+      const raw = (cells[i]||'').trim();
+      w[field] = field === 'amount' ? (parseFloat(raw.replace(/,/g,'')) || 0) : raw;
+    });
+    return w;
+  }).filter(w => w.date && w.fullNames && w.idNumber && w.amount > 0);
+
+  if(newWages.length === 0){
+    alert('No valid rows found. Each row needs at least a Date, Full Names, ID Number, and Amount greater than zero.');
+    event.target.value = '';
+    return;
+  }
+
+  const dbRows = newWages.map(w => ({
+    id: crypto.randomUUID(), company_id: state.activeClient, wage_date: w.date, full_names: w.fullNames,
+    id_number: w.idNumber, kra_pin: w.kraPin, amount: w.amount, payment_method: w.paymentMethod || 'Cash', voucher_number: w.voucherNumber
+  }));
+
+  const { error } = await sb.from('wages').insert(dbRows);
+  if(error){ alert('Import failed: ' + error.message); event.target.value = ''; return; }
+
+  dbRows.forEach((row, idx) => {
+    c.wages.unshift({ id: row.id, date: newWages[idx].date, fullNames: newWages[idx].fullNames, idNumber: newWages[idx].idNumber,
+                       kraPin: newWages[idx].kraPin, amount: newWages[idx].amount, paymentMethod: newWages[idx].paymentMethod || 'Cash',
+                       voucherNumber: newWages[idx].voucherNumber });
+  });
+  logAudit('Wages imported', `${dbRows.length} entries imported from CSV`);
+  render();
+  alert(`Imported ${dbRows.length} wage entr${dbRows.length===1?'y':'ies'}.`);
+  event.target.value = '';
+}
+
 async function submitWageEntry(evt){
   evt.preventDefault();
   const c = state.clients[state.activeClient];
@@ -2251,6 +2312,7 @@ async function submitWageEntry(evt){
   const kraPin = form.kraPin.value.trim();
   const amount = parseFloat(form.amount.value) || 0;
   const paymentMethod = form.paymentMethod.value;
+  const voucherNumber = form.voucherNumber.value.trim();
 
   if(!date || !fullNames || !idNumber){ alert('Date, full names, and ID number are required.'); return; }
   if(amount <= 0){ alert('Enter an amount greater than zero.'); return; }
@@ -2258,11 +2320,11 @@ async function submitWageEntry(evt){
   const newId = crypto.randomUUID();
   const { error } = await sb.from('wages').insert({
     id: newId, company_id: state.activeClient, wage_date: date, full_names: fullNames,
-    id_number: idNumber, kra_pin: kraPin, amount, payment_method: paymentMethod
+    id_number: idNumber, kra_pin: kraPin, amount, payment_method: paymentMethod, voucher_number: voucherNumber
   });
   if(error){ alert('Could not save wage entry: ' + error.message); return; }
 
-  c.wages.unshift({ id: newId, date, fullNames, idNumber, kraPin, amount, paymentMethod });
+  c.wages.unshift({ id: newId, date, fullNames, idNumber, kraPin, amount, paymentMethod, voucherNumber });
   logAudit('Wage entry added', `${fullNames} — ${fmt(amount)} (${paymentMethod})`);
   form.reset();
   render();
@@ -2287,7 +2349,7 @@ async function downloadWagesExcel(evt){
     await ensureXlsxLibLoaded();
     const rows = c.wages.map(w => ({
       'Date': w.date, 'Full Names': w.fullNames, 'ID Number': w.idNumber,
-      'KRA PIN': w.kraPin, 'Amount': w.amount, 'Payment Method': w.paymentMethod
+      'KRA PIN': w.kraPin, 'Amount': w.amount, 'Payment Method': w.paymentMethod, 'Voucher Number': w.voucherNumber
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
@@ -2325,9 +2387,9 @@ async function downloadWagesPDF(evt){
 
     doc.autoTable({
       startY: y,
-      head: [['Date','Full Names','ID Number','KRA PIN','Amount','Payment Method']],
-      body: c.wages.map(w => [w.date, w.fullNames, w.idNumber, w.kraPin||'-', fmt(w.amount), w.paymentMethod]),
-      foot: [['', '', '', 'TOTAL', fmt(total), '']],
+      head: [['Date','Full Names','ID Number','KRA PIN','Amount','Payment Method','Voucher No.']],
+      body: c.wages.map(w => [w.date, w.fullNames, w.idNumber, w.kraPin||'-', fmt(w.amount), w.paymentMethod, w.voucherNumber||'-']),
+      foot: [['', '', '', 'TOTAL', fmt(total), '', '']],
       margin: { left: 40, right: 40 },
       styles: { fontSize: 8.5, cellPadding: 5 },
       headStyles: { fillColor: [br,bg,bb], textColor: [255,255,255], fontStyle:'bold' },
@@ -2368,6 +2430,7 @@ function renderWagesView(main, c){
           <div class="settings-field"><label>Full names</label><input name="fullNames" required placeholder="e.g. John Otieno Wanjala"/></div>
           <div class="settings-field"><label>ID Number</label><input name="idNumber" required/></div>
           <div class="settings-field"><label>KRA PIN</label><input name="kraPin"/></div>
+          <div class="settings-field"><label>Payment voucher number</label><input name="voucherNumber"/></div>
           <div class="settings-field"><label>Amount</label><input type="number" name="amount" required min="0" step="0.01"/></div>
           <div class="settings-field"><label>Payment method</label>
             <select name="paymentMethod" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:6px 8px;font-size:12.5px;">
@@ -2383,14 +2446,19 @@ function renderWagesView(main, c){
       <button class="btn primary" onclick="downloadWagesExcel(event)">Download Excel</button>
       <button class="btn" onclick="downloadWagesPDF(event)">Download PDF</button>
     </div>
+    <div class="actions">
+      <button class="btn" onclick="exportWagesImportTemplate()">Download import template</button>
+      <button class="btn" onclick="document.getElementById('wagesCsvInput').click()">Import wages (CSV)</button>
+      <input type="file" id="wagesCsvInput" accept=".csv" style="display:none;" onchange="handleWagesCSVImport(event)" />
+    </div>
 
     <div class="table-wrap scroll-table">
       <table>
         <thead>
-          <tr><th>Date</th><th>Full Names</th><th>ID Number</th><th>KRA PIN</th><th>Amount</th><th>Payment Method</th><th></th></tr>
+          <tr><th>Date</th><th>Full Names</th><th>ID Number</th><th>KRA PIN</th><th>Amount</th><th>Payment Method</th><th>Voucher No.</th><th></th></tr>
         </thead>
         <tbody>
-          ${c.wages.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px;">No wage entries yet.</td></tr>` : ''}
+          ${c.wages.length === 0 ? `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px;">No wage entries yet.</td></tr>` : ''}
           ${c.wages.map(w => `
             <tr>
               <td class="mono">${esc(w.date)}</td>
@@ -2399,6 +2467,7 @@ function renderWagesView(main, c){
               <td class="mono">${esc(w.kraPin) || '-'}</td>
               <td class="num">${fmt(w.amount)}</td>
               <td>${esc(w.paymentMethod)}</td>
+              <td class="mono">${esc(w.voucherNumber) || '-'}</td>
               <td><span class="row-del" style="opacity:.6;" onclick="deleteWageEntry('${w.id}')">&times;</span></td>
             </tr>
           `).join('')}
