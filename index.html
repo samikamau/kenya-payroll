@@ -688,7 +688,7 @@ async function fetchAllData(){
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
       brandColor: c.brand_color || '#B08D57', logoDataUrl: c.logo_data_url || '',
       logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
-      isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null,
+      isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null, subscribedTier: c.subscribed_tier || null,
       view: 'pricing',
       auditLog: [], auditLogLoaded: false,
       leaveRequests: [], leaveRequestsLoaded: false,
@@ -822,7 +822,13 @@ async function addClient(){
     <div class="settings-panel">
       <h3 style="font-size:14px;color:var(--gold);font-family:'Fraunces',serif;font-weight:600;margin-bottom:14px;">Add a company</h3>
       <form onsubmit="submitNewClient(event)">
-        <div class="settings-field"><label>Company name</label><input name="companyName" placeholder="e.g. Spero Enterprises" autofocus/></div>
+        <div class="settings-field"><label>Company name *</label><input name="companyName" placeholder="e.g. Spero Enterprises" autofocus/></div>
+        <div class="settings-grid" style="margin-top:12px;">
+          <div class="settings-field"><label>Employer KRA PIN</label><input name="kraPin" placeholder="P0..." /></div>
+          <div class="settings-field"><label>NSSF employer number</label><input name="nssfEmployerNo" /></div>
+          <div class="settings-field"><label>SHA employer number</label><input name="shaEmployerNo" /></div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:10px;">Only the company name is required — everything else can be filled in or edited later.</div>
         <button class="btn primary" type="submit" style="margin-top:14px;width:100%;">Save</button>
       </form>
     </div>
@@ -839,16 +845,23 @@ async function submitNewClient(evt){
   if(!cleanName){ alert('A company name is required.'); return; }
   if(cleanName.toLowerCase() === 'untitled client'){ alert("Please use the company's actual name."); return; }
 
+  const kraPin = evt.target.kraPin.value.trim();
+  const nssfEmployerNo = evt.target.nssfEmployerNo.value.trim();
+  const shaEmployerNo = evt.target.shaEmployerNo.value.trim();
+
   // Generate the ID ourselves and insert plainly, without asking Supabase to hand the row
   // back in the same request. Chaining .select() after .insert() requires the SELECT policy
   // to succeed for a row that's a split second old, which can behave unreliably — this avoids
   // that dependency entirely, since we already know every value we just inserted.
   const newId = crypto.randomUUID();
-  const { error } = await sb.from('companies').insert({ id: newId, user_id: userData.user.id, name: cleanName });
+  const { error } = await sb.from('companies').insert({
+    id: newId, user_id: userData.user.id, name: cleanName,
+    kra_pin: kraPin, nssf_employer_no: nssfEmployerNo, sha_employer_no: shaEmployerNo
+  });
   if(error){ alert(error.message); return; }
-  state.clients[newId] = { name: cleanName, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'', ownerId: userData.user.id,
+  state.clients[newId] = { name: cleanName, period:'', kraPin, nssfEmployerNo, shaEmployerNo, ownerId: userData.user.id,
                             brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
-                            isPaid:false, trialPeriodUsed:null, view:'pricing', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
+                            isPaid:false, trialPeriodUsed:null, subscribedTier:null, view:'pricing', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = newId;
   closePanel();
   render();
@@ -2750,6 +2763,7 @@ async function subscribeToTier(tierName){
     });
     if(error){ alert('Could not switch plans: ' + error.message); return; }
     logAudit('Plan changed', `Switched to ${tierName} plan`);
+    c.subscribedTier = tierName;
     alert(`"${c.name}" is now on the ${tierName} plan.`);
     renderPricingView(document.getElementById('mainArea'), c);
     return;
@@ -2804,6 +2818,7 @@ async function submitSubscriptionRequest(evt, tierName){
   if(error){ alert('Could not activate your subscription: ' + error.message); return; }
 
   c.isPaid = true; // unlocked immediately — payment is invoiced/collected separately afterward
+  c.subscribedTier = tierName;
   logAudit('Client subscribed', `${tierName} plan — activated instantly, invoice to follow`);
   closePanel();
   alert(`Thanks, ${firstName} — "${c.name}" is now active on the ${tierName} plan. You have full access right away — an invoice for payment will follow separately.`);
@@ -2812,7 +2827,7 @@ async function submitSubscriptionRequest(evt, tierName){
 
 function renderPricingView(main, c){
   const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
-  const currentTier = getTierForCount(activeCount);
+  const currentTier = (c.isPaid && c.subscribedTier) ? (PRICING_TIERS.find(t => t.name === c.subscribedTier) || getTierForCount(activeCount)) : getTierForCount(activeCount);
   const trialExhausted = !c.isPaid && c.trialPeriodUsed && c.trialPeriodUsed !== (c.period||'');
   const inTrial = !c.isPaid && (!c.trialPeriodUsed || c.trialPeriodUsed === (c.period||''));
 
@@ -3266,6 +3281,45 @@ sb.auth.onAuthStateChange((event) => {
     document.getElementById('resetScreen').style.display = 'flex';
   }
 });
+
+/* ---------------- Make the Netlify badge draggable -----------------------------------------
+   Netlify's own injected "Powered by Netlify" badge can sit on top of page content, including
+   buttons like "Email to employee". Since it's added by Netlify itself (not this file), the
+   exact element can't be targeted with certainty from here — this searches for the common
+   patterns and makes whichever one it finds draggable, so it can be moved out of the way
+   rather than removed (removing it may not be permitted on Netlify's free tier). ------------ */
+function makeDraggable(el){
+  let offsetX = 0, offsetY = 0, dragging = false;
+  el.style.cursor = 'move';
+  el.addEventListener('mousedown', (e) => {
+    dragging = true;
+    const rect = el.getBoundingClientRect();
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+    el.style.position = 'fixed';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if(!dragging) return;
+    el.style.left = (e.clientX - offsetX) + 'px';
+    el.style.top = (e.clientY - offsetY) + 'px';
+    el.style.right = 'auto';
+    el.style.bottom = 'auto';
+  });
+  document.addEventListener('mouseup', () => { dragging = false; });
+}
+function findAndMakeNetlifyBadgeDraggable(){
+  const candidates = [
+    ...document.querySelectorAll('a[href*="netlify.com"]'),
+    ...document.querySelectorAll('a[href*="netlify.app"]'),
+    ...document.querySelectorAll('[id*="netlify" i]'),
+    ...document.querySelectorAll('[class*="netlify" i]')
+  ];
+  const badge = candidates.find(el => el.id !== 'scrollFab'); // exclude our own scroll button
+  if(badge) makeDraggable(badge.closest('a') || badge);
+}
+window.addEventListener('load', () => setTimeout(findAndMakeNetlifyBadgeDraggable, 1000));
+
 boot();
 </script>
 </body>
