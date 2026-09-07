@@ -689,7 +689,7 @@ async function fetchAllData(){
       brandColor: c.brand_color || '#B08D57', logoDataUrl: c.logo_data_url || '',
       logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
       isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null,
-      view: 'dashboard',
+      view: 'pricing',
       auditLog: [], auditLogLoaded: false,
       leaveRequests: [], leaveRequestsLoaded: false,
       wages: [], wagesLoaded: false,
@@ -833,7 +833,7 @@ async function addClient(){
   if(error){ alert(error.message); return; }
   state.clients[newId] = { name: cleanName, period:'', kraPin:'', nssfEmployerNo:'', shaEmployerNo:'', ownerId: userData.user.id,
                             brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
-                            isPaid:false, trialPeriodUsed:null, view:'dashboard', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
+                            isPaid:false, trialPeriodUsed:null, view:'pricing', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = newId;
   render(); // rename this client above, then use "+ Add employee" — a client can't have employees added while still called "Untitled Client"
 }
@@ -2763,14 +2763,17 @@ async function submitSubscriptionRequest(evt, tierName){
 
   if(!firstName || !lastName || !email || !phone || !county){ alert('Please fill in every field.'); return; }
 
-  const { error } = await sb.from('subscription_requests').insert({
-    company_id: state.activeClient, requested_tier: tierName,
-    first_name: firstName, last_name: lastName, email, phone, county
+  const { error } = await sb.rpc('submit_subscription_and_activate', {
+    p_company_id: state.activeClient, p_tier: tierName,
+    p_first_name: firstName, p_last_name: lastName, p_email: email, p_phone: phone, p_county: county
   });
-  if(error){ alert('Could not submit your request: ' + error.message); return; }
+  if(error){ alert('Could not activate your subscription: ' + error.message); return; }
 
+  c.isPaid = true; // unlocked immediately — payment is invoiced/collected separately afterward
+  logAudit('Client subscribed', `${tierName} plan — activated instantly, invoice to follow`);
   closePanel();
-  alert(`Thanks, ${firstName} — your request to subscribe "${c.name}" to the ${tierName} plan has been submitted. We'll be in touch shortly to confirm payment and activate it.`);
+  alert(`Thanks, ${firstName} — "${c.name}" is now active on the ${tierName} plan. You have full access right away — an invoice for payment will follow separately.`);
+  switchView('dashboard');
 }
 
 function renderPricingView(main, c){
