@@ -255,7 +255,7 @@
     <div id="clientList">
       <div style="font-size:12.5px;color:var(--muted);padding:10px 0;">Loading your clients…</div>
     </div>
-    <button class="add-client" onclick="addClient()">+ Add client</button>
+    <button class="add-client" id="addCompanyBtn" style="display:none;" onclick="addClient()">+ Add a Company</button>
     <div class="rail-footer">
       <button class="rail-btn" onclick="toggleSettings()">Statutory rates &amp; settings</button>
       <button class="rail-btn" onclick="toggleActivityLog()">Activity log</button>
@@ -707,11 +707,11 @@ async function fetchAllData(){
     };
   }));
 
-  if(companies.length === 0){
-    await addClient();
-  } else {
+  if(companies.length > 0){
     state.activeClient = companies[0].id;
   }
+  // If zero companies, activeClient stays null — renderMain shows a clear "Enter a Company"
+  // call-to-action instead of silently auto-creating one for them.
 }
 
 async function ensureLeaveRequestsLoaded(companyId){
@@ -818,11 +818,26 @@ async function addClient(){
     alert('Please confirm your email address before adding a client — check your inbox for the confirmation link we sent when you signed up. Contact us if you need it resent.');
     return;
   }
-  const name = prompt("Enter this client's name:");
-  if(name === null) return; // cancelled
+  openPanel(`
+    <div class="settings-panel">
+      <h3 style="font-size:14px;color:var(--gold);font-family:'Fraunces',serif;font-weight:600;margin-bottom:14px;">Add a company</h3>
+      <form onsubmit="submitNewClient(event)">
+        <div class="settings-field"><label>Company name</label><input name="companyName" placeholder="e.g. Spero Enterprises" autofocus/></div>
+        <button class="btn primary" type="submit" style="margin-top:14px;width:100%;">Save</button>
+      </form>
+    </div>
+  `);
+}
+
+async function submitNewClient(evt){
+  evt.preventDefault();
+  const { data: userData } = await sb.auth.getUser();
+  if(!userData?.user?.id){ alert('Could not confirm your login session. Try signing out and back in.'); return; }
+
+  const name = evt.target.companyName.value;
   const cleanName = name.trim();
-  if(!cleanName){ alert('A client name is required — nothing was created.'); return; }
-  if(cleanName.toLowerCase() === 'untitled client'){ alert("Please use the client's actual name."); return; }
+  if(!cleanName){ alert('A company name is required.'); return; }
+  if(cleanName.toLowerCase() === 'untitled client'){ alert("Please use the company's actual name."); return; }
 
   // Generate the ID ourselves and insert plainly, without asking Supabase to hand the row
   // back in the same request. Chaining .select() after .insert() requires the SELECT policy
@@ -835,7 +850,8 @@ async function addClient(){
                             brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
                             isPaid:false, trialPeriodUsed:null, view:'pricing', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = newId;
-  render(); // rename this client above, then use "+ Add employee" — a client can't have employees added while still called "Untitled Client"
+  closePanel();
+  render();
 }
 let _pendingDeleteCode = null;
 let _pendingDeleteExpiry = 0;
@@ -2172,6 +2188,8 @@ function render(){
   renderRail();
   renderMain();
   updateScrollFabIcon();
+  const addCompanyBtn = document.getElementById('addCompanyBtn');
+  if(addCompanyBtn) addCompanyBtn.style.display = Object.keys(state.clients).length > 0 ? 'block' : 'none';
 }
 function renderRail(){
   const list = document.getElementById('clientList');
@@ -2802,7 +2820,13 @@ function renderPricingView(main, c){
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;">
       ${PRICING_TIERS.map(t => {
-        const isCurrent = !inTrial && !c.isPaid && t.name === currentTier.name;
+        const currentIndex = PRICING_TIERS.findIndex(x => x.name === currentTier.name);
+        const thisIndex = PRICING_TIERS.findIndex(x => x.name === t.name);
+        const isCurrent = c.isPaid && t.name === currentTier.name;
+        let actionLabel = 'Subscribe';
+        if(c.isPaid && !isCurrent){
+          actionLabel = thisIndex > currentIndex ? 'Upgrade' : 'Downgrade';
+        }
         return `
         <div style="background:var(--panel);border:1px solid ${isCurrent ? 'var(--gold)' : 'var(--line)'};border-radius:8px;padding:20px 18px;${isCurrent ? 'box-shadow:0 0 0 1px var(--gold);' : ''}">
           <div style="font-family:'Fraunces',serif;font-size:18px;color:var(--ink);margin-bottom:4px;">${t.name}</div>
@@ -2812,9 +2836,10 @@ function renderPricingView(main, c){
             ${t.price !== null && t.price > 0 ? `<span style="font-size:11px;color:var(--muted);font-family:'Inter',sans-serif;">/month</span>` : ''}
           </div>
           <div style="font-size:12px;color:var(--muted);line-height:1.5;">${esc(t.note)}</div>
-          ${isCurrent ? `<div style="margin-top:14px;font-size:11px;color:var(--gold);font-weight:600;">CURRENT TIER</div>` : `
-          <button class="btn primary" style="margin-top:14px;width:100%;font-size:12px;" onclick="subscribeToTier('${esc(t.name)}')">Subscribe</button>
-          `}
+          ${isCurrent
+            ? `<div style="margin-top:14px;padding:8px;text-align:center;border-radius:5px;background:rgba(176,141,87,0.15);font-size:11px;color:var(--gold);font-weight:600;">CURRENT PLAN</div>`
+            : `<button class="btn primary" style="margin-top:14px;width:100%;font-size:12px;" onclick="subscribeToTier('${esc(t.name)}')">${actionLabel}</button>`
+          }
         </div>
       `}).join('')}
     </div>
@@ -2828,7 +2853,16 @@ function renderPricingView(main, c){
 function renderMain(){
   const main = document.getElementById('mainArea');
   const c = state.clients[state.activeClient];
-  if(!c){ main.innerHTML = `<div class="empty-state"><h2>No client selected</h2></div>`; return; }
+  if(!c){
+    main.innerHTML = `
+      <div class="empty-state" style="text-align:center;padding-top:80px;">
+        <h2 style="font-family:'Fraunces',serif;font-weight:500;margin-bottom:10px;">Welcome to Finlens Africa</h2>
+        <div style="color:var(--muted);font-size:13.5px;margin-bottom:22px;">Get started by adding your first company.</div>
+        <button class="btn primary" style="font-size:14px;padding:12px 28px;" onclick="addClient()">Enter a Company</button>
+      </div>
+    `;
+    return;
+  }
 
   if(c.view === 'leave'){ renderLeaveView(main, c); return; }
   if(c.view === 'wages'){ renderWagesView(main, c); return; }
