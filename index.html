@@ -620,6 +620,43 @@ async function handleSignOut(){
   document.getElementById('authScreen').style.display = 'flex';
 }
 
+function openCompanyProfilePanel(){
+  const c = state.clients[state.activeClient];
+  if(!c) return;
+  openPanel(`
+    <div class="settings-panel">
+      <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:16px;">Company profile — ${esc(c.name)}</h3>
+      <div class="settings-grid">
+        <div class="settings-field"><label>Employer KRA PIN</label><input value="${esc(c.kraPin)}" placeholder="P0..." onchange="updateClientField('kraPin', this.value)"/></div>
+        <div class="settings-field"><label>NSSF employer number</label><input value="${esc(c.nssfEmployerNo)}" onchange="updateClientField('nssfEmployerNo', this.value)"/></div>
+        <div class="settings-field"><label>SHA employer number</label><input value="${esc(c.shaEmployerNo)}" onchange="updateClientField('shaEmployerNo', this.value)"/></div>
+        <div class="settings-field"><label>Brand color (on payslip PDFs)</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="color" value="${c.brandColor||'#B08D57'}" style="width:40px;height:32px;padding:2px;background:var(--bg);border:1px solid var(--line);border-radius:4px;" onchange="updateClientField('brandColor', this.value); openCompanyProfilePanel()"/>
+            <input value="${c.brandColor||'#B08D57'}" onchange="updateClientField('brandColor', this.value); openCompanyProfilePanel()" />
+          </div>
+        </div>
+        <div class="settings-field">
+          <label>Company logo (on payslip PDFs)</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            ${c.logoDataUrl ? `<img src="${c.logoDataUrl}" style="height:32px;border-radius:3px;background:#fff;padding:2px;" />` : ''}
+            <button class="btn" style="font-size:11.5px;padding:6px 10px;" onclick="document.getElementById('logoFileInput').click()">${c.logoDataUrl ? 'Change' : 'Upload'}</button>
+            ${c.logoDataUrl ? `<button class="btn" style="font-size:11.5px;padding:6px 10px;" onclick="removeLogo()">Remove</button>` : ''}
+            <input type="file" id="logoFileInput" accept="image/*" style="display:none;" onchange="handleLogoUpload(event)" />
+          </div>
+        </div>
+        ${c.logoDataUrl ? `
+        <div class="settings-field">
+          <label>Logo size on PDFs (${Math.round(c.logoSize||60)}pt wide)</label>
+          <input type="range" min="24" max="140" step="2" value="${c.logoSize||60}"
+            oninput="this.previousElementSibling.textContent = 'Logo size on PDFs (' + this.value + 'pt wide)'"
+            onchange="updateClientField('logoSize', parseFloat(this.value)); openCompanyProfilePanel()"
+            style="width:100%;accent-color:var(--gold);" />
+        </div>` : ''}
+      </div>
+    </div>
+  `);
+}
 function openAccountPanel(){
   const ownedCount = Object.values(state.clients).filter(c => c.ownerId === state.currentUserId).length;
   openPanel(`
@@ -2955,35 +2992,10 @@ function renderMain(){
             : `<span style="font-size:12.5px;font-weight:600;background:linear-gradient(135deg, var(--gold), #D9B876);color:var(--bg);padding:6px 12px;border-radius:5px;box-shadow:0 0 0 1px rgba(176,141,87,0.4);">✨ Free trial: 1 payroll cycle available — try it now</span>`
           )
       }
-    </div>
-
-    <div class="settings-grid" style="margin-bottom:22px;">
-      <div class="settings-field"><label>Employer KRA PIN</label><input value="${esc(c.kraPin)}" placeholder="P0..." onchange="updateClientField('kraPin', this.value)"/></div>
-      <div class="settings-field"><label>NSSF employer number</label><input value="${esc(c.nssfEmployerNo)}" onchange="updateClientField('nssfEmployerNo', this.value)"/></div>
-      <div class="settings-field"><label>SHA employer number</label><input value="${esc(c.shaEmployerNo)}" onchange="updateClientField('shaEmployerNo', this.value)"/></div>
-      <div class="settings-field"><label>Brand color (on payslip PDFs)</label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <input type="color" value="${c.brandColor||'#B08D57'}" style="width:40px;height:32px;padding:2px;background:var(--bg);border:1px solid var(--line);border-radius:4px;" onchange="updateClientField('brandColor', this.value); render()"/>
-          <input value="${c.brandColor||'#B08D57'}" onchange="updateClientField('brandColor', this.value); render()" />
-        </div>
-      </div>
-      <div class="settings-field">
-        <label>Company logo (on payslip PDFs)</label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          ${c.logoDataUrl ? `<img src="${c.logoDataUrl}" style="height:32px;border-radius:3px;background:#fff;padding:2px;" />` : ''}
-          <button class="btn" style="font-size:11.5px;padding:6px 10px;" onclick="document.getElementById('logoFileInput').click()">${c.logoDataUrl ? 'Change' : 'Upload'}</button>
-          ${c.logoDataUrl ? `<button class="btn" style="font-size:11.5px;padding:6px 10px;" onclick="removeLogo()">Remove</button>` : ''}
-          <input type="file" id="logoFileInput" accept="image/*" style="display:none;" onchange="handleLogoUpload(event)" />
-        </div>
-      </div>
-      ${c.logoDataUrl ? `
-      <div class="settings-field">
-        <label>Logo size on PDFs (${Math.round(c.logoSize||60)}pt wide)</label>
-        <input type="range" min="24" max="140" step="2" value="${c.logoSize||60}"
-          oninput="this.previousElementSibling.textContent = 'Logo size on PDFs (' + this.value + 'pt wide)'"
-          onchange="updateClientField('logoSize', parseFloat(this.value)); render()"
-          style="width:100%;accent-color:var(--gold);" />
-      </div>` : ''}
+      <button class="btn" style="margin-left:auto;font-size:11.5px;display:flex;align-items:center;gap:6px;" onclick="openCompanyProfilePanel()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Company profile
+      </button>
     </div>
 
 
@@ -2995,18 +3007,6 @@ function renderMain(){
       <div class="card deduct"><div class="label">Total NSSF/SHIF</div><div class="value">${fmt(totals.nssf + totals.shif)}</div></div>
       <div class="card"><div class="label">Total employer cost</div><div class="value">${fmt(totals.employerCost)}</div></div>
     </div>
-
-    ${compSegments.length > 0 ? `
-    <div class="composition-wrap">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">PAYROLL COMPOSITION — ${c.period || 'this period'}</div>
-      <div style="font-size:12px;color:var(--muted);">Basic ${fmt(results.reduce((s,{e})=>s+(e.basic||0),0))} + Allowances ${fmt(results.reduce((s,{e})=>s+(e.allowances||0),0))} = Gross ${fmt(totals.gross)}</div>
-      <div class="composition-bar">
-        ${compSegments.map(s => `<div style="width:${(s.value/totals.gross*100).toFixed(2)}%;background:${s.color};" title="${s.label}: ${fmt(s.value)} (${(s.value/totals.gross*100).toFixed(1)}%)"></div>`).join('')}
-      </div>
-      <div class="composition-legend">
-        ${compSegments.map(s => `<div class="composition-legend-item"><span class="composition-swatch" style="background:${s.color};"></span>${s.label}: ${fmt(s.value)} <span style="color:var(--muted);">(${(s.value/totals.gross*100).toFixed(1)}%)</span></div>`).join('')}
-      </div>
-    </div>` : ''}
 
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12.5px;color:var(--muted);">
       <span>Show</span>
