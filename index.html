@@ -262,7 +262,10 @@
       <button class="rail-btn" onclick="toggleSharePanel()">Share &amp; access</button>
       <button class="rail-btn" id="adminBtn" style="display:none;color:var(--gold);" onclick="openPlatformAdminPanel()">Platform Admin</button>
       <button class="rail-btn" onclick="handleSignOut()">Sign out</button>
-      <button class="rail-btn" style="color:#C77B6E;font-size:11.5px;" onclick="deleteMyAccount()">Delete my account</button>
+      <button class="rail-btn" style="display:flex;align-items:center;gap:6px;" onclick="openAccountPanel()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Account
+      </button>
       <div class="user-badge" id="userBadge"></div>
     </div>
   </div>
@@ -617,6 +620,27 @@ async function handleSignOut(){
   document.getElementById('authScreen').style.display = 'flex';
 }
 
+function openAccountPanel(){
+  const ownedCount = Object.values(state.clients).filter(c => c.ownerId === state.currentUserId).length;
+  openPanel(`
+    <div class="settings-panel">
+      <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:16px;">Account profile</h3>
+      <div style="font-size:13px;color:var(--ink);padding:8px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;">
+        <span style="color:var(--muted);">Email</span><span>${esc(state.currentUserEmail || '')}</span>
+      </div>
+      <div style="font-size:13px;color:var(--ink);padding:8px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;">
+        <span style="color:var(--muted);">Member since</span><span>${state.currentUserCreatedAt ? new Date(state.currentUserCreatedAt).toLocaleDateString('en-KE') : '—'}</span>
+      </div>
+      <div style="font-size:13px;color:var(--ink);padding:8px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;">
+        <span style="color:var(--muted);">Clients you own</span><span>${ownedCount}</span>
+      </div>
+
+      <h3 style="font-size:12px;color:#C77B6E;font-family:'Inter',sans-serif;font-weight:600;margin-top:24px;margin-bottom:8px;">Danger zone</h3>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px;">Permanently deletes your login. This can't be undone.</div>
+      <button class="btn" style="border-color:#C77B6E;color:#C77B6E;" onclick="deleteMyAccount()">Delete my account</button>
+    </div>
+  `);
+}
 async function deleteMyAccount(){
   // Quick client-side check first, just for fast feedback — the real, unbypassable check
   // happens server-side in the Edge Function regardless of what this shows.
@@ -728,6 +752,8 @@ async function boot(){
   document.getElementById('appRoot').style.display = 'flex';
   document.getElementById('userBadge').textContent = session.user.email;
   state.currentUserId = session.user.id;
+  state.currentUserEmail = session.user.email;
+  state.currentUserCreatedAt = session.user.created_at;
   const { data: isAdmin } = await sb.rpc('is_platform_admin');
   state.isPlatformAdmin = isAdmin === true;
   document.getElementById('adminBtn').style.display = state.isPlatformAdmin ? 'block' : 'none';
@@ -2684,6 +2710,14 @@ function renderDashboardView(main, c){
   `;
 }
 
+function subscribeToTier(tierName, clientName){
+  const tier = PRICING_TIERS.find(t => t.name === tierName);
+  const priceText = tier.price === null ? tier.note : (tier.price === 0 ? 'Free' : `KES ${fmt(tier.price)}/month`);
+  const subject = encodeURIComponent(`Subscription request: ${clientName} — ${tierName} plan`);
+  const body = encodeURIComponent(`Hi,\n\nI'd like to subscribe "${clientName}" to the ${tierName} plan (${priceText}).\n\nAccount email: ${state.currentUserEmail || ''}\n\nPlease let me know the next step to complete payment and activate this plan.`);
+  window.location.href = `mailto:hello@finlensafrica.com?subject=${subject}&body=${body}`;
+}
+
 function renderPricingView(main, c){
   const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
   const currentTier = getTierForCount(activeCount);
@@ -2720,7 +2754,9 @@ function renderPricingView(main, c){
             ${t.price !== null && t.price > 0 ? `<span style="font-size:11px;color:var(--muted);font-family:'Inter',sans-serif;">/month</span>` : ''}
           </div>
           <div style="font-size:12px;color:var(--muted);line-height:1.5;">${esc(t.note)}</div>
-          ${isCurrent ? `<div style="margin-top:14px;font-size:11px;color:var(--gold);font-weight:600;">CURRENT TIER</div>` : ''}
+          ${isCurrent ? `<div style="margin-top:14px;font-size:11px;color:var(--gold);font-weight:600;">CURRENT TIER</div>` : `
+          <button class="btn primary" style="margin-top:14px;width:100%;font-size:12px;" onclick="subscribeToTier('${esc(t.name)}', '${esc(c.name).replace(/'/g,"\\'")}')">Subscribe</button>
+          `}
         </div>
       `}).join('')}
     </div>
