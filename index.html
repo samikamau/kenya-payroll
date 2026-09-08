@@ -704,8 +704,43 @@ function openCompanyProfilePanel(){
             style="width:100%;accent-color:var(--gold);" />
         </div>` : ''}
       </div>
+
+      ${renderPlanSection(c)}
     </div>
   `);
+}
+function renderPlanSection(c){
+  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
+  const currentTier = (c.isPaid && c.subscribedTier) ? (PRICING_TIERS.find(t => t.name === c.subscribedTier) || getTierForCount(activeCount)) : getTierForCount(activeCount);
+  const inTrial = !c.isPaid && (!c.trialPeriodUsed || c.trialPeriodUsed === (c.period||''));
+  const currentIndex = PRICING_TIERS.findIndex(t => t.name === currentTier.name);
+
+  return `
+    <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-top:22px;margin-bottom:10px;">Plan &amp; billing</h3>
+    <div style="font-size:12.5px;color:var(--ink);margin-bottom:12px;">
+      ${inTrial
+        ? `✨ On free trial — full access to every feature for one payroll cycle.`
+        : c.isPaid
+          ? `Currently on the <strong>${esc(currentTier.name)}</strong> plan (${activeCount} employee${activeCount===1?'':'s'}).`
+          : `Trial used, not yet subscribed. ${activeCount} employee${activeCount===1?'':'s'} — needs the <strong>${esc(currentTier.name)}</strong> plan to continue.`
+      }
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;">
+      ${PRICING_TIERS.map((t, i) => {
+        const isCurrent = c.isPaid && t.name === currentTier.name;
+        const priceText = t.price === null ? t.note : (t.price === 0 ? 'Free' : `KES ${fmt(t.price)}/mo`);
+        return `
+        <div style="background:var(--bg);border:1px solid ${isCurrent ? 'var(--gold)' : 'var(--line)'};border-radius:6px;padding:12px;">
+          <div style="font-size:12.5px;font-weight:600;color:var(--ink);">${esc(t.name)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">${priceText}</div>
+          ${isCurrent
+            ? `<div style="font-size:10.5px;color:var(--gold);font-weight:600;">CURRENT PLAN</div>`
+            : `<button class="btn" style="width:100%;font-size:11px;padding:5px 8px;" onclick="subscribeToTier('${esc(t.name)}')">${c.isPaid ? (i > currentIndex ? 'Upgrade' : 'Downgrade') : 'Subscribe'}</button>`
+          }
+        </div>
+      `}).join('')}
+    </div>
+  `;
 }
 /* ---------------- First-time product tour --------------------------------------------------
    A simple, reliable step-through walkthrough — not a live spotlight overlay, since that needs
@@ -813,7 +848,7 @@ async function fetchAllData(){
       brandColor: c.brand_color || '#B08D57', logoDataUrl: c.logo_data_url || '',
       logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
       isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null, subscribedTier: c.subscribed_tier || null, phone: c.phone || '',
-      view: 'pricing',
+      view: 'dashboard',
       auditLog: [], auditLogLoaded: false,
       leaveRequests: [], leaveRequestsLoaded: false,
       wages: [], wagesLoaded: false,
@@ -990,7 +1025,7 @@ async function submitNewClient(evt){
   if(error){ alert(error.message); return; }
   state.clients[newId] = { name: cleanName, period:'', kraPin, nssfEmployerNo, shaEmployerNo, ownerId: userData.user.id,
                             brandColor:'#B08D57', logoDataUrl:'', logoSize:60, logoAspect:0.75,
-                            isPaid:false, trialPeriodUsed:null, subscribedTier:null, phone:'', view:'pricing', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
+                            isPaid:false, trialPeriodUsed:null, subscribedTier:null, phone:'', view:'dashboard', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = newId;
   closePanel();
   render();
@@ -2351,7 +2386,6 @@ function viewTabsHtml(c){
       ${tab('payroll', 'Payroll')}
       ${tab('wages', 'Wages')}
       ${tab('leave', 'Leave Management')}
-      ${tab('pricing', 'Pricing')}
     </div>
   `;
 }
@@ -2894,7 +2928,7 @@ async function subscribeToTier(tierName){
     logAudit('Plan changed', `Switched to ${tierName} plan`);
     c.subscribedTier = tierName;
     alert(`"${c.name}" is now on the ${tierName} plan.`);
-    renderPricingView(document.getElementById('mainArea'), c);
+    openCompanyProfilePanel();
     return;
   }
 
@@ -3027,7 +3061,6 @@ function renderMain(){
   if(c.view === 'leave'){ renderLeaveView(main, c); return; }
   if(c.view === 'wages'){ renderWagesView(main, c); return; }
   if(c.view === 'dashboard'){ renderDashboardView(main, c); return; }
-  if(c.view === 'pricing'){ renderPricingView(main, c); return; }
 
   const results = c.employees.map(e => ({ e, r: calcEmployee(e) }));
   const visibleResults = showAllEmployees ? results : results.slice(0, employeeRowLimit);
