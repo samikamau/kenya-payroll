@@ -636,14 +636,33 @@ async function handleAuthSubmit(){
   showAuthError('');
   if(!email || !password){ showAuthError('Enter an email and password.'); return; }
   if(authMode === 'signup' && password.length < 8){ showAuthError('Password must be at least 8 characters.'); return; }
-  const fn = authMode === 'signin' ? sb.auth.signInWithPassword : sb.auth.signUp;
-  const { error } = await fn.call(sb.auth, { email, password });
-  if(error){ showAuthError(error.message); return; }
-  if(authMode === 'signup'){
-    showAuthError('Account created. Check your email if confirmation is required, then sign in.');
+
+  if(authMode === 'signin'){
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){ showAuthError(error.message); return; }
+    await boot();
     return;
   }
-  await boot();
+
+  const { data, error } = await sb.auth.signUp({ email, password });
+  if(error){
+    // Some Supabase configurations return an explicit error for a duplicate email.
+    if(/already registered|already exists|user already/i.test(error.message)){
+      showAuthError('An account with this email already exists. Try signing in instead, or use "Forgot password" if you\'ve forgotten it.');
+    } else {
+      showAuthError(error.message);
+    }
+    return;
+  }
+  // Other configurations (with email confirmation required, like ours) don't return an
+  // explicit error for a duplicate email — Supabase deliberately avoids confirming which
+  // emails are registered, the same reasoning as the password reset flow. Instead it signals
+  // a duplicate by returning a user object with an empty "identities" array.
+  if(data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0){
+    showAuthError('An account with this email already exists. Try signing in instead, or use "Forgot password" if you\'ve forgotten it.');
+    return;
+  }
+  showAuthError('Account created. Check your email if confirmation is required, then sign in.');
 }
 async function handleForgotPassword(){
   const email = prompt('Enter your account email — we\'ll send a password reset link:');
