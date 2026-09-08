@@ -142,7 +142,7 @@
 
   /* Drawer */
   .drawer-backdrop{
-    position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;z-index:10;
+    position:fixed;inset:0;background:rgba(0,0,0,.2);display:none;z-index:10;
   }
   .drawer-backdrop.open{display:block;}
   .drawer{
@@ -372,7 +372,7 @@ let RATES = {
 const SUPABASE_URL = 'https://fmargcknmofzpihujzdc.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_2-DM351xvcU2tXUIuX-vQg_CTpuRD3q';
 // "Remember me" support: when checked, the session persists across browser restarts (localStorage).
-// When unchecked, it's kept only for the current browser session (sessionStorage) — closing the
+// When unchecked, it's kept only for the current browser session (sessionStorage) - closing the
 // browser signs the person out. getItem checks both so an existing session is found either way;
 // setItem decides where a NEW session gets written based on the checkbox at the moment of sign-in.
 let rememberMeChoice = true;
@@ -491,7 +491,7 @@ function toggleShowAllEmployees(){
 let authMode = 'signin'; // or 'signup'
 
 function esc(str){
-  // Escapes text before it's interpolated into HTML attributes or content — prevents a
+  // Escapes text before it's interpolated into HTML attributes or content - prevents a
   // client/employee name containing a stray quote or angle bracket from breaking out of
   // an attribute and injecting arbitrary HTML/JS (stored XSS).
   return String(str ?? '')
@@ -655,7 +655,7 @@ async function handleAuthSubmit(){
     return;
   }
   // Other configurations (with email confirmation required, like ours) don't return an
-  // explicit error for a duplicate email — Supabase deliberately avoids confirming which
+  // explicit error for a duplicate email - Supabase deliberately avoids confirming which
   // emails are registered, the same reasoning as the password reset flow. Instead it signals
   // a duplicate by returning a user object with an empty "identities" array.
   if(data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0){
@@ -820,7 +820,7 @@ function openAccountPanel(){
   `);
 }
 async function deleteMyAccount(){
-  // Quick client-side check first, just for fast feedback — the real, unbypassable check
+  // Quick client-side check first, just for fast feedback - the real, unbypassable check
   // happens server-side in the Edge Function regardless of what this shows.
   const ownedCount = Object.values(state.clients).filter(c => c.ownerId === state.currentUserId).length;
   if(ownedCount > 0){
@@ -850,11 +850,11 @@ async function fetchAllData(){
   if(error){ alert('Could not load clients: ' + error.message); return; }
   state.clients = {};
 
-  // Load every company concurrently instead of one-after-another — this is the single biggest
+  // Load every company concurrently instead of one-after-another - this is the single biggest
   // speed fix. With 5 clients, the old code did 20 sequential network round-trips before
   // rendering anything; this does them all in parallel instead. Leave requests and the audit
   // log are also deferred entirely until you actually open that tab/panel, since most logins
-  // never touch them for most clients — payroll_periods stays eager since the payroll view
+  // never touch them for most clients - payroll_periods stays eager since the payroll view
   // needs it immediately to show locked/processed status correctly on first paint.
   await Promise.all(companies.map(async (c) => {
     const [{ data: employees }, { data: payrollPeriods }] = await Promise.all([
@@ -888,7 +888,7 @@ async function fetchAllData(){
   if(companies.length > 0){
     state.activeClient = companies[0].id;
   }
-  // If zero companies, activeClient stays null — renderMain shows a clear "Enter a Company"
+  // If zero companies, activeClient stays null - renderMain shows a clear "Enter a Company"
   // call-to-action instead of silently auto-creating one for them.
 }
 
@@ -1034,7 +1034,7 @@ async function submitNewClient(evt){
 
   // Generate the ID ourselves and insert plainly, without asking Supabase to hand the row
   // back in the same request. Chaining .select() after .insert() requires the SELECT policy
-  // to succeed for a row that's a split second old, which can behave unreliably — this avoids
+  // to succeed for a row that's a split second old, which can behave unreliably - this avoids
   // that dependency entirely, since we already know every value we just inserted.
   const newId = crypto.randomUUID();
   const { error } = await sb.from('companies').insert({
@@ -1146,7 +1146,7 @@ function isPeriodClosed(c, period){
 function isPeriodLocked(c, period){
   // Both 'Processed' and 'Closed' block direct editing. The difference: Processed can be
   // reopened (an explicit, logged action); Closed cannot, ever, per the two documents'
-  // resolved rule — this is the only place that distinction is decided.
+  // resolved rule - this is the only place that distinction is decided.
   const p = getPeriodRecord(c, period);
   return !!(p && (p.status === 'Processed' || p.status === 'Closed'));
 }
@@ -1190,7 +1190,7 @@ function hasRealClientName(c){
   const name = (c.name || '').trim().toLowerCase();
   return name.length > 0 && name !== 'untitled client';
 }
-/* ---------------- Pricing tiers — based on active employee count per account, not per client.
+/* ---------------- Pricing tiers - based on active employee count per account, not per client.
    The free trial is separate from this: it gives FULL access (any tier, any feature) for
    exactly one payroll cycle. Only after that cycle is used does the tier system take over —
    small accounts (<=3 employees) can continue indefinitely on the free tier with its real
@@ -1217,7 +1217,7 @@ function requireAccess(c){
   }
   if(c.trialPeriodUsed === currentPeriod) return true; // still within that same trial cycle
 
-  // Trial is used up and this account isn't paid — every tier is now a paid tier, so this
+  // Trial is used up and this account isn't paid - every tier is now a paid tier, so this
   // blocks regardless of size, same rule for a 2-employee account as a 200-employee one.
   const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
   const tier = getTierForCount(activeCount);
@@ -1361,7 +1361,7 @@ function removeDeductionItem(empId, idx){
   openDrawer(empId);
 }
 
-/* ---------------- One-off pay items (bonus, commission, etc.) — mirrors deduction items above ---------------- */
+/* ---------------- One-off pay items (bonus, commission, etc.) - mirrors deduction items above ---------------- */
 const _bonusSaveTimers = {};
 async function saveBonusItems(empId, items){
   const { error } = await sb.from('employees').update({ bonus_items: items }).eq('id', empId);
@@ -1437,7 +1437,7 @@ async function generatePayslipPDF(empId){
   };
   const centerX = pageWidth / 2;
 
-  // Header block: logo, company name, "PAYSLIP" title, pay period — all centered.
+  // Header block: logo, company name, "PAYSLIP" title, pay period - all centered.
   y += 6;
   if(c.logoDataUrl){
     try{
@@ -1835,7 +1835,7 @@ function downloadCSV(rows, filename){
 }
 
 function exportKRA(){
-  // Matches the KRA iTax P10A "Simplified" employee details format — no header row,
+  // Matches the KRA iTax P10A "Simplified" employee details format - no header row,
   // 25 fixed-position columns. Verified against a real KRA-generated sample.
   const c = state.clients[state.activeClient];
   if(!requireAccess(c)) return;
@@ -2237,7 +2237,7 @@ async function finalizePayrollRun(evt){
 
   if(periodError){ btn.textContent = originalText; btn.disabled = false; alert('Payroll data was saved, but the period status could not be updated: ' + periodError.message); return; }
 
-  // Fetch the id as a separate, plain query afterward — an upsert can't safely generate the id
+  // Fetch the id as a separate, plain query afterward - an upsert can't safely generate the id
   // client-side (an existing row must keep its original id on conflict), and a follow-up select
   // in its own request avoids the same-statement RETURNING+policy interaction entirely.
   const { data: periodRow } = await sb.from('payroll_periods').select('id').eq('company_id', state.activeClient).eq('period', c.period).single();
@@ -2251,7 +2251,7 @@ async function finalizePayrollRun(evt){
   if(existing) Object.assign(existing, rec); else c.payrollPeriods.push(rec);
 
   // Roll-over: one-off pay/deduction items (not marked "Recurring") are now locked into this
-  // period's history via the snapshot above — clear them from the live employee record so they
+  // period's history via the snapshot above - clear them from the live employee record so they
   // don't silently reappear next period. Recurring items are left untouched; that's what makes
   // next period a review-and-amend process instead of re-entering everything from scratch.
   let clearedCount = 0;
@@ -2533,7 +2533,7 @@ function renderLeaveView(main, c){
   `;
 }
 
-/* ---------------- Wages register (standalone) — daily/casual wage workers.
+/* ---------------- Wages register (standalone) - daily/casual wage workers.
    Deliberately kept separate from the main payroll engine: not fed into PAYE/NSSF/SHIF.
    Just a clean, exportable log an accountant can hand over or file independently. ------- */
 const PAYMENT_METHODS = ['Cash','M-Pesa','Bank Transfer'];
@@ -2778,7 +2778,7 @@ function renderWagesView(main, c){
   `;
 }
 
-/* ---------------- Dashboard — pulls together real Payroll, Leave, and Wages data for the
+/* ---------------- Dashboard - pulls together real Payroll, Leave, and Wages data for the
    active client. Everything shown is computed from data already loaded; nothing is invented
    or estimated. Set as the default view, per request. ------------------------------------- */
 function svgDonutChart(segments, size){
@@ -2840,7 +2840,7 @@ function renderDashboardView(main, c){
 
   const totalCompensation = payrollTotals.net + totalWages;
 
-  // Insights — every line is directly derived from the numbers above, nothing estimated.
+  // Insights - every line is directly derived from the numbers above, nothing estimated.
   const insights = [];
   if(activeEmployees > 0) insights.push(`${activeEmployees} active employee${activeEmployees===1?'':'s'} on payroll this period.`);
   if(pendingLeaveCount > 0) insights.push(`${pendingLeaveCount} leave request${pendingLeaveCount===1?'':'s'} awaiting your decision.`);
@@ -2934,7 +2934,7 @@ async function subscribeToTier(tierName){
   const priceText = tier.price === null ? tier.note : (tier.price === 0 ? 'Free' : `KES ${fmt(tier.price)}/month`);
 
   if(c.isPaid){
-    // Already subscribed once before — an upgrade/downgrade just changes the plan, no need
+    // Already subscribed once before - an upgrade/downgrade just changes the plan, no need
     // to re-collect contact details that were already captured on first subscription.
     if(!confirm(`Switch "${c.name}" to the ${tierName} plan (${priceText})?`)) return;
     const { data: lastRequest } = await sb.from('subscription_requests').select('*').eq('company_id', state.activeClient).order('created_at', { ascending:false }).limit(1).maybeSingle();
@@ -3093,7 +3093,7 @@ function renderMain(){
   const activeEmployees = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
 
   // Composition bar: each segment as a % of gross pay, so the bar always sums to 100% of what
-  // was actually earned this period — built entirely from real totals above, nothing hard-coded.
+  // was actually earned this period - built entirely from real totals above, nothing hard-coded.
   const compSegments = totals.gross > 0 ? [
     { label:'Net pay',        value: totals.net,         color:'#B08D57' },
     { label:'PAYE',           value: totals.paye,        color:'#C77B6E' },
