@@ -1872,30 +1872,60 @@ function exportKRA(){
   downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_P10A_${c.period||''}.csv`);
 }
 
-function exportNSSF(){
+async function exportNSSF(evt){
   // Matches the NSSF new-format upload: PAYROLL NUMBER, SURNAME, OTHER NAMES, ID NO, KRA PIN, NSSF NO, GROSS PAY, VOLUNTARY
   const c = state.clients[state.activeClient];
   if(!requireAccess(c)) return;
-  const rows = [['PAYROLL NUMBER','SURNAME','OTHER NAMES','ID NO','KRA PIN','NSSF NO','GROSS PAY','VOLUNTARY']];
-  c.employees.forEach(e=>{
-    const { surname, otherNames } = splitName(e.name);
-    const r = calcEmployee(e);
-    rows.push([e.payrollNumber||'', surname, otherNames, e.idNumber||'', e.pin||'', e.nssfNo||'', Math.round(r.gross), 0]);
-  });
-  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_NSSF_${c.period||''}.csv`);
+  const btn = evt.target; const originalText = btn.textContent;
+  btn.textContent = 'Preparing...'; btn.disabled = true;
+  try{
+    await ensureXlsxLibLoaded();
+    const rows = c.employees.map(e=>{
+      const { surname, otherNames } = splitName(e.name);
+      const r = calcEmployee(e);
+      return {
+        'PAYROLL NUMBER': e.payrollNumber||'', 'SURNAME': surname, 'OTHER NAMES': otherNames,
+        'ID NO': e.idNumber||'', 'KRA PIN': e.pin||'', 'NSSF NO': e.nssfNo||'',
+        'GROSS PAY': Math.round(r.gross), 'VOLUNTARY': 0
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'NSSF');
+    XLSX.writeFile(wb, `${(c.name||'client').replace(/\s+/g,'_')}_NSSF_${c.period||''}.xlsx`);
+  } catch(err){
+    alert('Could not build the Excel file: ' + err.message);
+  } finally {
+    btn.textContent = originalText; btn.disabled = false;
+  }
 }
 
-function exportSHA(){
+async function exportSHA(evt){
   // Matches the SHA/SHIF upload: PAYROLL NUMBER, FIRSTNAME, LASTNAME, IDENTITY TYPE, ID NO, KRA PIN, NHIF NO, CONTRIBUTION AMOUNT, PHONE
   const c = state.clients[state.activeClient];
   if(!requireAccess(c)) return;
-  const rows = [['PAYROLL NUMBER','FIRSTNAME','LASTNAME','IDENTITY TYPE','ID NO','KRA PIN','NHIF NO','CONTRIBUTION AMOUNT','PHONE']];
-  c.employees.forEach(e=>{
-    const { surname, otherNames } = splitName(e.name);
-    const r = calcEmployee(e);
-    rows.push([e.payrollNumber||'', otherNames, surname, e.identityType||'National ID', e.idNumber||'', e.pin||'', e.shaNo||'', Math.round(r.shif), e.phone||'']);
-  });
-  downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_${c.period||''}.csv`);
+  const btn = evt.target; const originalText = btn.textContent;
+  btn.textContent = 'Preparing...'; btn.disabled = true;
+  try{
+    await ensureXlsxLibLoaded();
+    const rows = c.employees.map(e=>{
+      const { surname, otherNames } = splitName(e.name);
+      const r = calcEmployee(e);
+      return {
+        'PAYROLL NUMBER': e.payrollNumber||'', 'FIRSTNAME': otherNames, 'LASTNAME': surname,
+        'IDENTITY TYPE': e.identityType||'National ID', 'ID NO': e.idNumber||'', 'KRA PIN': e.pin||'',
+        'NHIF NO': e.shaNo||'', 'CONTRIBUTION AMOUNT': Math.round(r.shif), 'PHONE': e.phone||''
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'SHA_SHIF');
+    XLSX.writeFile(wb, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_${c.period||''}.xlsx`);
+  } catch(err){
+    alert('Could not build the Excel file: ' + err.message);
+  } finally {
+    btn.textContent = originalText; btn.disabled = false;
+  }
 }
 
 /* ---------------- Bulk import ---------------- */
@@ -3248,8 +3278,8 @@ function renderMain(){
       <button class="btn primary" onclick="exportCSV()">Export payroll register (CSV)</button>
       <button class="btn" onclick="exportPayrollRegisterPDF()">Export payroll register (PDF)</button>
       <button class="btn" onclick="exportKRA()">KRA P10A file</button>
-      <button class="btn" onclick="exportNSSF()">NSSF return file</button>
-      <button class="btn" onclick="exportSHA()">SHA/SHIF return file</button>
+      <button class="btn" onclick="exportNSSF(event)">NSSF return file</button>
+      <button class="btn" onclick="exportSHA(event)">SHA/SHIF return file</button>
     </div>
     <div class="actions">
       <button class="btn" onclick="exportImportTemplate()">Download import template</button>
