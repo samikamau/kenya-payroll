@@ -465,7 +465,7 @@ async function ensureXlsxLibLoaded(){
   await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
 }
 
-let state = { clients: {}, activeClient: null, currentUserId: null };
+let state = { clients: {}, activeClient: null, currentUserId: null, subscription: { isPaid: false, subscribedTier: null, trialPeriodUsed: null } };
 let employeeRowLimit = parseInt(localStorage.getItem('employeeRowLimit')) || 5;
 
 const EMP_TABLE_COLS = [
@@ -756,9 +756,10 @@ async function handleSignOut(){
 function openCompanyProfilePanel(){
   const c = state.clients[state.activeClient];
   if(!c) return;
-  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
-  const currentTier = (c.isPaid && c.subscribedTier) ? (PRICING_TIERS.find(t => t.name === c.subscribedTier) || getTierForCount(activeCount)) : getTierForCount(activeCount);
-  const inTrial = !c.isPaid && (!c.trialPeriodUsed || c.trialPeriodUsed === (c.period||''));
+  const accountEmployeeCount = getTotalEmployeeCountAcrossAccount();
+  const sub = state.subscription;
+  const currentTier = (sub.isPaid && sub.subscribedTier) ? (PRICING_TIERS.find(t => t.name === sub.subscribedTier) || getTierForCount(accountEmployeeCount)) : getTierForCount(accountEmployeeCount);
+  const inTrial = !sub.isPaid && (!sub.trialPeriodUsed || sub.trialPeriodUsed === (c.period||''));
   const isFreeTier = currentTier.name === 'Free' && !inTrial;
   openPanel(`
     <div class="settings-panel">
@@ -806,9 +807,10 @@ function openCompanyProfilePanel(){
   `);
 }
 function renderPlanSection(c){
-  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
-  const currentTier = (c.isPaid && c.subscribedTier) ? (PRICING_TIERS.find(t => t.name === c.subscribedTier) || getTierForCount(activeCount)) : getTierForCount(activeCount);
-  const inTrial = !c.isPaid && (!c.trialPeriodUsed || c.trialPeriodUsed === (c.period||''));
+  const accountEmployeeCount = getTotalEmployeeCountAcrossAccount();
+  const sub = state.subscription;
+  const currentTier = (sub.isPaid && sub.subscribedTier) ? (PRICING_TIERS.find(t => t.name === sub.subscribedTier) || getTierForCount(accountEmployeeCount)) : getTierForCount(accountEmployeeCount);
+  const inTrial = !sub.isPaid && (!sub.trialPeriodUsed || sub.trialPeriodUsed === (c.period||''));
   const currentIndex = PRICING_TIERS.findIndex(t => t.name === currentTier.name);
 
   return `
@@ -816,22 +818,22 @@ function renderPlanSection(c){
     <div style="font-size:12.5px;color:var(--ink);margin-bottom:12px;">
       ${inTrial
         ? `✨ On free trial. Full access to every feature for one payroll cycle.`
-        : c.isPaid
-          ? `Currently on the <strong>${esc(currentTier.name)}</strong> plan (${activeCount} employee${activeCount===1?'':'s'}).`
-          : `Trial used, not yet subscribed. ${activeCount} employee${activeCount===1?'':'s'}, needs the <strong>${esc(currentTier.name)}</strong> plan to continue.`
+        : sub.isPaid
+          ? `Currently on the <strong>${esc(currentTier.name)}</strong> plan (${accountEmployeeCount} employee${accountEmployeeCount===1?'':'s'} across all your companies).`
+          : `Trial used, not yet subscribed. ${accountEmployeeCount} employee${accountEmployeeCount===1?'':'s'} across all your companies, needs the <strong>${esc(currentTier.name)}</strong> plan to continue.`
       }
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;">
       ${PRICING_TIERS.map((t, i) => {
-        const isCurrent = c.isPaid && t.name === currentTier.name;
-        const priceText = tierPriceDisplay(t.name, activeCount);
+        const isCurrent = sub.isPaid && t.name === currentTier.name;
+        const priceText = tierPriceDisplay(t.name, accountEmployeeCount);
         return `
         <div style="background:var(--bg);border:1px solid ${isCurrent ? 'var(--gold)' : 'var(--line)'};border-radius:6px;padding:12px;">
           <div style="font-size:12.5px;font-weight:600;color:var(--ink);">${esc(t.name)}</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">${priceText}</div>
           ${isCurrent
             ? `<div style="font-size:10.5px;color:var(--gold);font-weight:600;">CURRENT PLAN</div>`
-            : `<button class="btn" style="width:100%;font-size:11px;padding:5px 8px;" onclick="subscribeToTier('${esc(t.name)}')">${c.isPaid ? (i > currentIndex ? 'Upgrade' : 'Downgrade') : 'Subscribe'}</button>`
+            : `<button class="btn" style="width:100%;font-size:11px;padding:5px 8px;" onclick="subscribeToTier('${esc(t.name)}')">${sub.isPaid ? (i > currentIndex ? 'Upgrade' : 'Downgrade') : 'Subscribe'}</button>`
           }
         </div>
       `}).join('')}
@@ -927,6 +929,15 @@ async function fetchAllData(){
   if(error){ alert('Could not load clients: ' + error.message); return; }
   state.clients = {};
 
+  // Billing is per user account now, not per company - one subscription row covers every
+  // company this user manages. RLS scopes this to the caller's own row automatically.
+  const { data: subRow } = await sb.from('subscriptions').select('*').eq('user_id', state.currentUserId).maybeSingle();
+  state.subscription = {
+    isPaid: subRow?.is_paid || false,
+    subscribedTier: subRow?.subscribed_tier || null,
+    trialPeriodUsed: subRow?.trial_period_used || null
+  };
+
   // Load every company concurrently instead of one-after-another - this is the single biggest
   // speed fix. With 5 clients, the old code did 20 sequential network round-trips before
   // rendering anything; this does them all in parallel instead. Leave requests and the audit
@@ -942,8 +953,7 @@ async function fetchAllData(){
       name: c.name, period: c.period, kraPin: c.kra_pin, ownerId: c.user_id,
       nssfEmployerNo: c.nssf_employer_no, shaEmployerNo: c.sha_employer_no,
       brandColor: c.brand_color || '#123C36', logoDataUrl: c.logo_data_url || '',
-      logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75,
-      isPaid: c.is_paid || false, trialPeriodUsed: c.trial_period_used || null, subscribedTier: c.subscribed_tier || null, phone: c.phone || '',
+      logoSize: c.logo_size || 60, logoAspect: c.logo_aspect || 0.75, phone: c.phone || '',
       view: 'dashboard',
       auditLog: [], auditLogLoaded: false,
       leaveRequests: [], leaveRequestsLoaded: false,
@@ -967,6 +977,12 @@ async function fetchAllData(){
   }
   // If zero companies, activeClient stays null - renderMain shows a clear "Enter a Company"
   // call-to-action instead of silently auto-creating one for them.
+}
+// Total active employees across every company this user manages - this, not any single
+// company's headcount, is what determines the account's pricing tier.
+function getTotalEmployeeCountAcrossAccount(){
+  return Object.values(state.clients).reduce((sum, c) =>
+    sum + c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length, 0);
 }
 
 async function ensureLeaveRequestsLoaded(companyId){
@@ -1121,7 +1137,7 @@ async function submitNewClient(evt){
   if(error){ alert(error.message); return; }
   state.clients[newId] = { name: cleanName, period:'', kraPin, nssfEmployerNo, shaEmployerNo, ownerId: userData.user.id,
                             brandColor:'#123C36', logoDataUrl:'', logoSize:60, logoAspect:0.75,
-                            isPaid:false, trialPeriodUsed:null, subscribedTier:null, phone:'', view:'dashboard', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
+                            phone:'', view:'dashboard', leaveRequests:[], auditLog:[], payrollPeriods:[], employees: [] };
   state.activeClient = newId;
   closePanel();
   render();
@@ -1314,49 +1330,52 @@ function requireAccess(c){
     alert('Give this client a real name (top of the page) before running payroll for them — "Untitled Client" can\'t be used for anything beyond initial setup.');
     return false;
   }
-  if(c.isPaid) return true;
+  if(state.subscription.isPaid) return true;
   const currentPeriod = c.period || '(no period set)';
-  if(!c.trialPeriodUsed){
-    c.trialPeriodUsed = currentPeriod;
-    sb.from('companies').update({ trial_period_used: currentPeriod }).eq('id', state.activeClient);
-    return true; // trial: full access, any tier, for this one cycle
+  const sub = state.subscription;
+  if(!sub.trialPeriodUsed){
+    sub.trialPeriodUsed = currentPeriod;
+    sb.from('subscriptions').upsert({ user_id: state.currentUserId, trial_period_used: currentPeriod }, { onConflict: 'user_id' });
+    return true; // trial: full access, any tier, for this one cycle, across every company on the account
   }
-  if(c.trialPeriodUsed === currentPeriod) return true; // still within that same trial cycle
+  if(sub.trialPeriodUsed === currentPeriod) return true; // still within that same trial cycle
 
   // Trial is used up and this account isn't paid - every tier is now a paid tier, so this
   // blocks regardless of size, same rule for a 2-employee account as a 200-employee one.
-  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
-  const tier = getTierForCount(activeCount);
-  const tierPriceText = tierPriceDisplay(tier.name, activeCount);
-  alert(`This client's free payroll cycle (${c.trialPeriodUsed}) has already been used. With ${activeCount} employee${activeCount===1?'':'s'}, this account needs the ${tier.name} plan (${tierPriceText}) to continue. See the Pricing tab, then contact us to activate, or mark this client as paid if it's already arranged.`);
+  // The employee count and tier are account-wide, since one subscription covers every
+  // company this user manages, not just the one they're currently looking at.
+  const accountEmployeeCount = getTotalEmployeeCountAcrossAccount();
+  const tier = getTierForCount(accountEmployeeCount);
+  const tierPriceText = tierPriceDisplay(tier.name, accountEmployeeCount);
+  alert(`Your account's free payroll cycle (${sub.trialPeriodUsed}) has already been used. With ${accountEmployeeCount} employee${accountEmployeeCount===1?'':'s'} across all your companies, this account needs the ${tier.name} plan (${tierPriceText}) to continue. See Company Profile, then contact us to activate, or mark this account as paid if it's already arranged.`);
   return false;
 }
 async function markClientPaid(){
   const c = state.clients[state.activeClient];
   if(!c) return;
   if(!state.isPlatformAdmin){
-    alert('Only the Edhafu Payroll admin can activate paid status for a client. If you\'ve made payment, contact us and we\'ll activate it for you.');
+    alert('Only the Edhafu Payroll admin can activate paid status for an account. If you\'ve made payment, contact us and we\'ll activate it for you.');
     return;
   }
-  if(!confirm(`Mark "${c.name || 'this client'}" as paid? This unlocks unlimited payroll cycles for them.`)) return;
-  const { error } = await sb.from('companies').update({ is_paid: true }).eq('id', state.activeClient);
+  if(!confirm(`Mark this account as paid? This unlocks unlimited payroll cycles across every company they manage.`)) return;
+  const { error } = await sb.from('subscriptions').upsert({ user_id: c.ownerId, is_paid: true }, { onConflict: 'user_id' });
   if(error){ alert('Could not update paid status: ' + error.message); return; }
-  c.isPaid = true;
-  logAudit('Client marked as paid', c.name || '');
+  state.subscription.isPaid = true;
+  logAudit('Account marked as paid', c.name || '');
   render();
 }
 async function markClientUnpaid(){
   const c = state.clients[state.activeClient];
   if(!c) return;
   if(!state.isPlatformAdmin){
-    alert('Only the Edhafu Payroll admin can change paid status for a client.');
+    alert('Only the Edhafu Payroll admin can change paid status for an account.');
     return;
   }
-  if(!confirm(`Move "${c.name || 'this client'}" back to trial status? They'll be restricted again once their trial period is used.`)) return;
-  const { error } = await sb.from('companies').update({ is_paid: false }).eq('id', state.activeClient);
+  if(!confirm(`Move this account back to trial status? They'll be restricted again once their trial period is used.`)) return;
+  const { error } = await sb.from('subscriptions').upsert({ user_id: c.ownerId, is_paid: false }, { onConflict: 'user_id' });
   if(error){ alert('Could not update paid status: ' + error.message); return; }
-  c.isPaid = false;
-  logAudit('Client moved back to trial', c.name || '');
+  state.subscription.isPaid = false;
+  logAudit('Account moved back to trial', c.name || '');
   render();
 }
 async function updateClientField(field, value){
@@ -3067,13 +3086,13 @@ const KENYA_COUNTIES = ['Mombasa','Kwale','Kilifi','Tana River','Lamu','Taita-Ta
 async function subscribeToTier(tierName){
   const c = state.clients[state.activeClient];
   const tier = PRICING_TIERS.find(t => t.name === tierName);
-  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
-  const priceText = tierPriceDisplay(tier.name, activeCount);
+  const accountEmployeeCount = getTotalEmployeeCountAcrossAccount();
+  const priceText = tierPriceDisplay(tier.name, accountEmployeeCount);
 
-  if(c.isPaid){
+  if(state.subscription.isPaid){
     // Already subscribed once before - an upgrade/downgrade just changes the plan, no need
     // to re-collect contact details that were already captured on first subscription.
-    if(!confirm(`Switch "${c.name}" to the ${tierName} plan (${priceText})?`)) return;
+    if(!confirm(`Switch your account to the ${tierName} plan (${priceText})?`)) return;
     const { data: lastRequest } = await sb.from('subscription_requests').select('*').eq('company_id', state.activeClient).order('created_at', { ascending:false }).limit(1).maybeSingle();
     const { error } = await sb.rpc('submit_subscription_and_activate', {
       p_company_id: state.activeClient, p_tier: tierName,
@@ -3082,20 +3101,20 @@ async function subscribeToTier(tierName){
     });
     if(error){ alert('Could not switch plans: ' + error.message); return; }
     logAudit('Plan changed', `Switched to ${tierName} plan`);
-    c.subscribedTier = tierName;
-    alert(`"${c.name}" is now on the ${tierName} plan.`);
+    state.subscription.subscribedTier = tierName;
+    alert(`Your account is now on the ${tierName} plan.`);
     openCompanyProfilePanel();
     return;
   }
 
   openPanel(`
     <div class="settings-panel">
-      <h3 style="font-size:14px;color:var(--gold);font-family:'Fraunces',serif;font-weight:600;margin-bottom:4px;">Subscribe — ${esc(tierName)} plan</h3>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:18px;">${priceText} for ${esc(c.name)}. We'll be in touch to confirm payment and activate this plan.</div>
+      <h3 style="font-size:14px;color:var(--gold);font-family:'Fraunces',serif;font-weight:600;margin-bottom:4px;">Subscribe, ${esc(tierName)} plan</h3>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:18px;">${priceText} for your account. We'll be in touch to confirm payment and activate this plan.</div>
       <form onsubmit="submitSubscriptionRequest(event, '${esc(tierName)}')">
         <div class="settings-grid">
           <div class="settings-field"><label>Company / Organization</label><input value="${esc(c.name)}" disabled style="opacity:0.7;"/></div>
-          <div class="settings-field"><label>No. of employees</label><input value="${activeCount}" disabled style="opacity:0.7;"/></div>
+          <div class="settings-field"><label>No. of employees (all companies)</label><input value="${accountEmployeeCount}" disabled style="opacity:0.7;"/></div>
           <div class="settings-field"><label>First name</label><input name="firstName" required/></div>
           <div class="settings-field"><label>Last name</label><input name="lastName" required/></div>
           <div class="settings-field"><label>Email</label><input type="email" name="email" required value="${esc(state.currentUserEmail||'')}"/></div>
@@ -3136,11 +3155,11 @@ async function submitSubscriptionRequest(evt, tierName){
   });
   if(error){ alert('Could not activate your subscription: ' + error.message); return; }
 
-  c.isPaid = true; // unlocked immediately — payment is invoiced/collected separately afterward
-  c.subscribedTier = tierName;
-  logAudit('Client subscribed', `${tierName} plan — activated instantly, invoice to follow`);
+  state.subscription.isPaid = true; // unlocked immediately, payment is invoiced/collected separately afterward
+  state.subscription.subscribedTier = tierName;
+  logAudit('Account subscribed', `${tierName} plan, activated instantly, invoice to follow`);
   closePanel();
-  alert(`Thanks, ${firstName} — "${c.name}" is now active on the ${tierName} plan. You have full access right away — an invoice for payment will follow separately.`);
+  alert(`Thanks, ${firstName}. Your account is now active on the ${tierName} plan, covering every company you manage. You have full access right away, an invoice for payment will follow separately.`);
   switchView('dashboard');
 }
 
@@ -3261,14 +3280,14 @@ function renderMain(){
     ` : '')}
 
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
-      ${c.isPaid
+      ${state.subscription.isPaid
         ? `<span style="font-size:12px;background:rgba(176,141,87,0.15);color:var(--gold);padding:5px 10px;border-radius:4px;">Active (paid)</span>
            ${state.isPlatformAdmin ? `<button class="btn" style="font-size:11.5px;padding:5px 10px;" onclick="markClientUnpaid()">Move back to trial</button>` : ''}`
-        : (c.trialPeriodUsed
-            ? `<span style="font-size:12px;background:rgba(239,68,68,0.18);color:#EF4444;padding:5px 10px;border-radius:4px;">Free trial used (${c.trialPeriodUsed})${c.trialPeriodUsed !== (c.period||'') ? ' \u2014 new periods blocked' : ''}</span>
+        : (state.subscription.trialPeriodUsed
+            ? `<span style="font-size:12px;background:rgba(239,68,68,0.18);color:#EF4444;padding:5px 10px;border-radius:4px;">Free trial used (${state.subscription.trialPeriodUsed})${state.subscription.trialPeriodUsed !== (c.period||'') ? ', new periods blocked' : ''}</span>
                ${state.isPlatformAdmin
                   ? `<button class="btn primary" style="font-size:11.5px;padding:5px 10px;" onclick="markClientPaid()">Mark as paid</button>`
-                  : `<span style="font-size:11.5px;color:var(--muted);">Made payment? Contact Edhafu Payroll to activate this client.</span>`
+                  : `<span style="font-size:11.5px;color:var(--muted);">Made payment? Contact Edhafu Payroll to activate your account.</span>`
                }`
             : `<span style="font-size:12.5px;font-weight:600;background:linear-gradient(135deg, #123C36, #1F5149);color:#FFFFFF;padding:6px 12px;border-radius:5px;box-shadow:0 0 0 1px rgba(18,60,54,0.35);">✨ Free trial: 1 payroll cycle available, try it now</span>`
           )
@@ -3409,21 +3428,29 @@ async function openPlatformAdminPanel(){
   if(!state.isPlatformAdmin){ alert('Not authorized.'); return; }
   openPanel(`<div class="settings-panel"><div style="color:var(--muted);font-size:13px;">Loading platform stats…</div></div>`);
 
-  const [{ data: stats, error: statsError }, { data: companiesList, error: companiesError }, { data: accountsList, error: accountsError }] = await Promise.all([
+  const [{ data: stats, error: statsError }, { data: companiesList, error: companiesError }, { data: accountsList, error: accountsError }, { data: billingList, error: billingError }] = await Promise.all([
     sb.rpc('admin_get_platform_stats'),
     sb.rpc('admin_get_all_companies'),
-    sb.rpc('admin_get_all_accounts')
+    sb.rpc('admin_get_all_accounts'),
+    sb.rpc('admin_get_account_billing')
   ]);
 
-  if(statsError || companiesError || accountsError){
-    openPanel(`<div class="settings-panel"><div style="color:#EF4444;font-size:13px;">Could not load platform data: ${esc((statsError||companiesError||accountsError).message)}</div></div>`);
+  if(statsError || companiesError || accountsError || billingError){
+    openPanel(`<div class="settings-panel"><div style="color:#EF4444;font-size:13px;">Could not load platform data: ${esc((statsError||companiesError||accountsError||billingError).message)}</div></div>`);
     return;
   }
+
+  // Billing is per user account now, not per company - build a lookup keyed by email
+  // (since the company listing only exposes owner_email, not a raw user_id) so each
+  // company row can show its OWNER's real account-wide status, not a stale per-company flag.
+  const billingByEmail = {};
+  (billingList||[]).forEach(b => { billingByEmail[b.email] = b; });
 
   adminDataCache = {
     stats: stats[0] || { total_accounts:0, total_companies:0, paid_companies:0, trial_companies:0 },
     companies: companiesList || [],
-    accounts: accountsList || []
+    accounts: accountsList || [],
+    billingByEmail
   };
   adminFilterEmail = '';
   adminFilterActivity = '';
@@ -3439,22 +3466,25 @@ function clientActivityStatus(lastPayrollRun){
 }
 const ACTIVITY_COLORS = { Live:'#10B981', Active:'#2563EB', Dormant:'#EF4444' };
 
-async function adminTogglePaidStatus(companyId, currentlyPaid, clientName){
+async function adminToggleAccountPaidStatus(userId, email, currentlyPaid){
   const verb = currentlyPaid ? 'move back to trial' : 'activate (mark as paid)';
-  if(!confirm(`Are you sure you want to ${verb} "${clientName}"?`)) return;
-  const { error } = await sb.rpc('admin_set_paid_status', { target_company_id: companyId, new_status: !currentlyPaid });
+  if(!confirm(`Are you sure you want to ${verb} the account for "${email}"? This affects every company they manage.`)) return;
+  const { error } = await sb.rpc('admin_set_account_paid_status', { p_user_id: userId, p_is_paid: !currentlyPaid });
   if(error){ alert('Could not update: ' + error.message); return; }
-  const c = adminDataCache.companies.find(x => x.id === companyId);
-  if(c) c.is_paid = !currentlyPaid;
-  // If this admin also happens to own/share this exact client locally, keep that view in sync too.
-  const localClient = state.clients[companyId];
-  if(localClient) localClient.isPaid = !currentlyPaid;
+  if(adminDataCache.billingByEmail[email]) adminDataCache.billingByEmail[email].is_paid = !currentlyPaid;
+  else adminDataCache.billingByEmail[email] = { user_id: userId, email, is_paid: !currentlyPaid, subscribed_tier: null };
+  if(state.currentUserId === userId) state.subscription.isPaid = !currentlyPaid;
   renderAdminPanelContent();
 }
 
 function renderAdminPanelContent(){
   if(!adminDataCache) return;
-  const { stats: s, companies, accounts } = adminDataCache;
+  const { stats: s, companies, accounts, billingByEmail } = adminDataCache;
+  // Paid/trial counts here are computed from the account-level billing data (accurate,
+  // since billing moved to per-user), not from s.paid_companies/s.trial_companies, which
+  // still reflect the old per-company flag and would now be stale.
+  const paidAccountCount = Object.values(billingByEmail).filter(b => b.is_paid).length;
+  const trialAccountCount = s.total_accounts - paidAccountCount;
   let filteredCompanies = adminFilterEmail ? companies.filter(c => c.owner_email === adminFilterEmail) : companies;
   if(adminFilterActivity) filteredCompanies = filteredCompanies.filter(c => clientActivityStatus(c.last_payroll_run) === adminFilterActivity);
   const uniqueEmails = [...new Set(accounts.map(a => a.email))].sort();
@@ -3464,13 +3494,13 @@ function renderAdminPanelContent(){
   openPanel(`
     <div class="settings-panel">
       <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:4px;">Platform Admin</h3>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px;">Visible only to you — enforced by the database, not just this screen.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px;">Visible only to you, enforced by the database, not just this screen.</div>
 
       <div class="summary" style="margin-bottom:12px;">
         <div class="card"><div class="label">Total accounts</div><div class="value">${s.total_accounts}</div></div>
         <div class="card"><div class="label">Total clients</div><div class="value">${s.total_companies}</div></div>
-        <div class="card accent"><div class="label">Paid</div><div class="value">${s.paid_companies}</div></div>
-        <div class="card deduct"><div class="label">On trial</div><div class="value">${s.trial_companies}</div></div>
+        <div class="card accent"><div class="label">Paid accounts</div><div class="value">${paidAccountCount}</div></div>
+        <div class="card deduct"><div class="label">Accounts on trial</div><div class="value">${trialAccountCount}</div></div>
       </div>
 
       <div class="summary" style="margin-bottom:20px;">
@@ -3503,6 +3533,7 @@ function renderAdminPanelContent(){
         ${filteredCompanies.length === 0 ? `<div style="color:var(--muted);font-size:12px;padding:10px 0;">No clients match this filter.</div>` : ''}
         ${filteredCompanies.map(c => {
           const status = clientActivityStatus(c.last_payroll_run);
+          const billing = adminDataCache.billingByEmail[c.owner_email] || { user_id: null, is_paid: false };
           return `
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;">
             <div style="min-width:0;">
@@ -3513,8 +3544,8 @@ function renderAdminPanelContent(){
               <div style="color:var(--muted);font-size:11px;">${esc(c.owner_email)}${c.last_payroll_run ? ' · last payroll ' + new Date(c.last_payroll_run).toLocaleDateString('en-KE') : ' · no payroll run yet'}</div>
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-              <span style="color:${c.is_paid ? 'var(--gold)' : '#EF4444'};white-space:nowrap;">${c.is_paid ? 'Paid' : 'Trial'}</span>
-              <button class="btn" style="font-size:10.5px;padding:4px 8px;" onclick="adminTogglePaidStatus('${c.id}', ${c.is_paid}, '${esc(c.client_name).replace(/'/g,"\\'")}')">${c.is_paid ? 'Move to trial' : 'Activate'}</button>
+              <span style="color:${billing.is_paid ? 'var(--gold)' : '#EF4444'};white-space:nowrap;">${billing.is_paid ? 'Paid' : 'Trial'}</span>
+              <button class="btn" style="font-size:10.5px;padding:4px 8px;" onclick="adminToggleAccountPaidStatus('${billing.user_id}', '${esc(c.owner_email).replace(/'/g,"\\'")}', ${billing.is_paid})">${billing.is_paid ? 'Move to trial' : 'Activate'}</button>
             </div>
           </div>
         `}).join('')}
