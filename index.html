@@ -291,6 +291,7 @@
     <div class="auth-field"><label>Email</label><input type="email" id="authEmail" autocomplete="email" /></div>
     <div class="auth-field auth-signup-only" style="display:none;"><label>Company</label><input type="text" id="authCompany" autocomplete="organization" /></div>
     <div class="auth-field auth-signup-only" style="display:none;"><label>Telephone number</label><input type="tel" id="authPhone" autocomplete="tel" /></div>
+    <div class="auth-field auth-signup-only" style="display:none;"><label>Number of employees</label><input type="number" id="authEmployeeCount" min="1" step="1" /></div>
     <div class="auth-field">
       <label>Password</label>
       <div style="position:relative;">
@@ -693,17 +694,19 @@ async function handleAuthSubmit(){
   const fullName = document.getElementById('authFullName').value.trim();
   const company = document.getElementById('authCompany').value.trim();
   const phone = document.getElementById('authPhone').value.trim();
+  const employeeCount = document.getElementById('authEmployeeCount').value.trim();
   const commsOptIn = document.getElementById('authCommsOptIn').checked;
 
   if(!fullName){ showAuthError('Enter your full name.'); return; }
   if(!email || !password){ showAuthError('Enter an email and password.'); return; }
   if(!company){ showAuthError('Enter your company name.'); return; }
   if(!phone){ showAuthError('Enter your telephone number.'); return; }
+  if(!employeeCount || parseInt(employeeCount, 10) < 1){ showAuthError('Enter your number of employees.'); return; }
   if(password.length < 8){ showAuthError('Password must be at least 8 characters.'); return; }
 
   const { data, error } = await sb.auth.signUp({
     email, password,
-    options: { data: { full_name: fullName, company, phone, comms_opt_in: commsOptIn } }
+    options: { data: { full_name: fullName, company, phone, employee_count: parseInt(employeeCount, 10), comms_opt_in: commsOptIn } }
   });
   if(error){
     // Some Supabase configurations return an explicit error for a duplicate email.
