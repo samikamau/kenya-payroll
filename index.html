@@ -254,9 +254,9 @@
   <div style="max-width:800px;width:100%;margin-bottom:36px;">
     <h3 style="font-size:13px;color:var(--gold);text-align:center;margin-bottom:14px;">Pricing</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;">
-      <div class="card"><div class="label">Free</div><div style="font-size:18px;">KES 0</div><div style="font-size:11px;color:var(--muted);">1 to 3 employees</div></div>
-      <div class="card"><div class="label">Starter</div><div style="font-size:18px;">KES 500 + KES 100/employee</div><div style="font-size:11px;color:var(--muted);">4 to 15 employees</div></div>
-      <div class="card"><div class="label">Enterprise</div><div style="font-size:18px;">KES 1,600 + KES 80/employee</div><div style="font-size:11px;color:var(--muted);">16+ employees</div></div>
+      <div class="card"><div class="label">Free</div><div style="font-size:18px;">KES 0</div><div style="font-size:11px;color:var(--muted);">1 to 2 employees</div></div>
+      <div class="card"><div class="label">Starter</div><div style="font-size:18px;">KES 500 min, then +100/employee</div><div style="font-size:11px;color:var(--muted);">3 to 15 employees</div></div>
+      <div class="card"><div class="label">Enterprise</div><div style="font-size:18px;">KES 1,500 + KES 30/employee</div><div style="font-size:11px;color:var(--muted);">16+ employees</div></div>
     </div>
   </div>
 
@@ -756,6 +756,10 @@ async function handleSignOut(){
 function openCompanyProfilePanel(){
   const c = state.clients[state.activeClient];
   if(!c) return;
+  const activeCount = c.employees.filter(e => e.name && e.name.trim() && e.employmentStatus !== 'Terminated').length;
+  const currentTier = (c.isPaid && c.subscribedTier) ? (PRICING_TIERS.find(t => t.name === c.subscribedTier) || getTierForCount(activeCount)) : getTierForCount(activeCount);
+  const inTrial = !c.isPaid && (!c.trialPeriodUsed || c.trialPeriodUsed === (c.period||''));
+  const isFreeTier = currentTier.name === 'Free' && !inTrial;
   openPanel(`
     <div class="settings-panel">
       <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-bottom:16px;">Company profile — ${esc(c.name)}</h3>
@@ -764,6 +768,13 @@ function openCompanyProfilePanel(){
         <div class="settings-field"><label>NSSF employer number</label><input value="${esc(c.nssfEmployerNo)}" onchange="updateClientField('nssfEmployerNo', this.value)"/></div>
         <div class="settings-field"><label>SHA employer number</label><input value="${esc(c.shaEmployerNo)}" onchange="updateClientField('shaEmployerNo', this.value)"/></div>
         <div class="settings-field"><label>Telephone number</label><input type="tel" value="${esc(c.phone)}" placeholder="07XX XXX XXX" onchange="updateClientField('phone', this.value)"/></div>
+        ${isFreeTier ? `
+        <div class="settings-field" style="grid-column:1 / -1;background:var(--bg);border:1px dashed var(--line);border-radius:6px;padding:14px 16px;">
+          <div style="font-size:12.5px;color:var(--ink);font-weight:600;margin-bottom:4px;">🔒 Branding is a paid feature</div>
+          <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">Add your company logo and choose a brand color for payslip PDFs once you upgrade from the Free plan.</div>
+          <button class="btn primary" style="font-size:11.5px;padding:6px 12px;" onclick="subscribeToTier('Starter')">Upgrade to Starter</button>
+        </div>
+        ` : `
         <div class="settings-field"><label>Brand color (on payslip PDFs)</label>
           <div style="display:flex;gap:8px;align-items:center;">
             <input type="color" value="${c.brandColor||'#123C36'}" style="width:40px;height:32px;padding:2px;background:var(--bg);border:1px solid var(--line);border-radius:4px;" onchange="updateClientField('brandColor', this.value); openCompanyProfilePanel()"/>
@@ -787,6 +798,7 @@ function openCompanyProfilePanel(){
             onchange="updateClientField('logoSize', parseFloat(this.value)); openCompanyProfilePanel()"
             style="width:100%;accent-color:var(--gold);" />
         </div>` : ''}
+        `}
       </div>
 
       ${renderPlanSection(c)}
@@ -1261,14 +1273,14 @@ function hasRealClientName(c){
    small accounts (<=3 employees) can continue indefinitely on the free tier with its real
    limits (no branding, no payslip email); anything larger must be marked paid. ------------- */
 const PRICING_TIERS = [
-  { name:'Free', min:0, max:3, note:'Full features' },
-  { name:'Starter', min:4, max:15, note:'KES 500 + KES 100 per employee above 4, full features' },
-  { name:'Enterprise', min:16, max:Infinity, note:'KES 1,600 + KES 80 per additional employee, full features' }
+  { name:'Free', min:0, max:2, note:'Full features' },
+  { name:'Starter', min:3, max:15, note:'KES 500 minimum (3 to 5 employees), then KES 100 per employee above 5, full features' },
+  { name:'Enterprise', min:16, max:Infinity, note:'KES 1,500 + KES 30 per additional employee, full features' }
 ];
 function calcTierPrice(tierName, count){
   if(tierName === 'Free') return 0;
-  if(tierName === 'Starter') return 500 + 100 * Math.max(0, count - 4);
-  if(tierName === 'Enterprise') return 1600 + 80 * Math.max(0, count - 15);
+  if(tierName === 'Starter') return count <= 5 ? 500 : 500 + 100 * (count - 5);
+  if(tierName === 'Enterprise') return 1500 + 30 * Math.max(0, count - 15);
   return 0;
 }
 // For a tier NOT matching the given count, shows a representative range/starting price
@@ -1276,8 +1288,8 @@ function calcTierPrice(tierName, count){
 function tierPriceDisplay(tierName, atCount){
   if(tierName === 'Free') return 'Free';
   if(tierName === 'Starter'){
-    if(atCount != null && atCount >= 4 && atCount <= 15) return `KES ${calcTierPrice('Starter', atCount).toLocaleString()}/month`;
-    return `KES ${calcTierPrice('Starter',4).toLocaleString()} to KES ${calcTierPrice('Starter',15).toLocaleString()}/month`;
+    if(atCount != null && atCount >= 3 && atCount <= 15) return `KES ${calcTierPrice('Starter', atCount).toLocaleString()}/month`;
+    return `KES ${calcTierPrice('Starter',3).toLocaleString()} to KES ${calcTierPrice('Starter',15).toLocaleString()}/month`;
   }
   if(tierName === 'Enterprise'){
     if(atCount != null && atCount >= 16) return `KES ${calcTierPrice('Enterprise', atCount).toLocaleString()}/month`;
