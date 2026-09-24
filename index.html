@@ -291,7 +291,8 @@
     <div class="auth-field"><label>Email</label><input type="email" id="authEmail" autocomplete="email" /></div>
     <div class="auth-field auth-signup-only" style="display:none;"><label>Company</label><input type="text" id="authCompany" autocomplete="organization" /></div>
     <div class="auth-field auth-signup-only" style="display:none;"><label>Telephone number</label><input type="tel" id="authPhone" autocomplete="tel" /></div>
-    <div class="auth-field auth-signup-only" style="display:none;"><label>Number of employees</label><input type="number" id="authEmployeeCount" min="1" step="1" /></div>
+    <div class="auth-field auth-signup-only" style="display:none;"><label>Number of employees</label><input type="number" id="authEmployeeCount" min="1" step="1" oninput="updateSignupCostEstimate()" /></div>
+    <div id="signupCostEstimate" class="auth-signup-only" style="display:none;font-size:12.5px;color:var(--gold);margin-top:-10px;margin-bottom:14px;font-weight:600;"></div>
     <div class="auth-field">
       <label>Password</label>
       <div style="position:relative;">
@@ -670,6 +671,7 @@ function toggleAuthMode(){
     : `No account yet? <a onclick="toggleAuthMode()">Create one</a>`;
   document.getElementById('authPassword').setAttribute('autocomplete', isSignup ? 'new-password' : 'current-password');
   document.querySelectorAll('.auth-signup-only').forEach(el => { el.style.display = isSignup ? '' : 'none'; });
+  if(isSignup) updateSignupCostEstimate();
   document.getElementById('authRememberRow').style.display = isSignup ? 'none' : 'flex';
   document.getElementById('authSideTitle').textContent = isSignup ? 'Get started with Edhafu Payroll' : 'Welcome back';
   document.getElementById('authSideBody').textContent = isSignup
@@ -1265,6 +1267,24 @@ const PRICING_TIERS = [
 ];
 function getTierForCount(count){
   return PRICING_TIERS.find(t => count >= t.min && count <= t.max) || PRICING_TIERS[PRICING_TIERS.length-1];
+}
+function updateSignupCostEstimate(){
+  const el = document.getElementById('signupCostEstimate');
+  const raw = document.getElementById('authEmployeeCount').value.trim();
+  const count = parseInt(raw, 10);
+  if(!raw || isNaN(count) || count < 1){ el.textContent = ''; return; }
+  const tier = getTierForCount(count);
+  let priceText;
+  if(tier.price === 0){
+    priceText = 'Free';
+  } else if(tier.price === null){
+    // Enterprise: KES 1,000 base + KES 50 per employee beyond 15
+    const estimated = 1000 + 50 * (count - 15);
+    priceText = `KES ${estimated.toLocaleString()}/month`;
+  } else {
+    priceText = `KES ${tier.price.toLocaleString()}/month`;
+  }
+  el.textContent = `Estimated package: ${tier.name}, ${priceText}`;
 }
 function requireAccess(c){
   if(!hasRealClientName(c)){
