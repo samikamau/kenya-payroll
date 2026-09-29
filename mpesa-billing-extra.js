@@ -318,7 +318,37 @@
     ["mpBillingBar"].forEach((id) => { const old = document.getElementById(id); if (old) old.remove(); });
     const main = document.getElementById("mainArea");
     if (main && state.currentUserId && !document.getElementById("mpBillingBarX")) main.insertAdjacentHTML("afterbegin", barHtml());
+    renderAccountCard();
   };
+
+  // ---------- Sidebar: account number card, always visible ----------
+  function renderAccountCard() {
+    const badge = document.getElementById("userBadge");
+    if (!badge || !state.accountNumber) return;
+    let card = document.getElementById("acctCardX");
+    if (!card) {
+      card = document.createElement("div");
+      card.id = "acctCardX";
+      card.style.cssText = "margin-top:10px;padding:10px 12px;border-radius:6px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);";
+      badge.insertAdjacentElement("afterend", card);
+    }
+    const s = sub();
+    const plan = s.isPaid
+      ? `${esc(s.subscribedTier || "Paid")}${s.paidUntil ? (isExpired() ? " &middot; expired" : " &middot; to " + fmtDate(s.paidUntil)) : ""}`
+      : "Free trial";
+    card.innerHTML = `
+      <div style="font-size:10.5px;color:rgba(255,255,255,.6);letter-spacing:.04em;">ACCOUNT NO.</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px;">
+        <span class="mono" style="font-size:16px;font-weight:600;color:#fff;letter-spacing:.03em;">${esc(state.accountNumber)}</span>
+        <button type="button" id="acctCopyX" style="background:none;border:1px solid rgba(255,255,255,.3);color:rgba(255,255,255,.85);border-radius:4px;font-size:10.5px;padding:3px 8px;cursor:pointer;">Copy</button>
+      </div>
+      <div style="font-size:11px;color:rgba(255,255,255,.65);margin-top:4px;">${plan}</div>`;
+    card.querySelector("#acctCopyX").onclick = async (e) => {
+      try { await navigator.clipboard.writeText(state.accountNumber); e.target.textContent = "Copied"; }
+      catch (_) { e.target.textContent = state.accountNumber; }
+      setTimeout(() => { e.target.textContent = "Copy"; }, 1500);
+    };
+  }
 
   // ---------- Company profile: note instead of plan cards ----------
   window.renderPlanSection = function () {
