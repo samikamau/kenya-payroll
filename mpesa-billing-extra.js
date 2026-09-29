@@ -17,8 +17,19 @@
     if (n <= 2 && owned().length <= 1) return "Free";
     return n <= 15 ? "Starter" : "Enterprise";
   }
+  function fullPrice(n) {                 // monthly bill for n employees on a paid plan
+    return n <= 15 ? (n <= 5 ? 500 : 500 + 100 * (n - 5)) : 1500 + 30 * (n - 15);
+  }
+  function topupAmount() {
+    const s = sub();
+    if (!(s.isPaid && s.paidUntil && !isExpired() && s.coveredAmount != null)) return 0;
+    const diff = fullPrice(headcount()) - Number(s.coveredAmount);
+    if (diff <= 0) return 0;
+    return diff;                          // full difference for this payroll cycle (not prorated)
+  }
   function price(tier, n) {
     if (tier === "Test") return 1;
+    if (tier === "Topup") return topupAmount();
     if (tier === "Starter") return n <= 5 ? 500 : 500 + 100 * (n - 5);
     if (tier === "Enterprise") return 1500 + 30 * Math.max(0, n - 15);
     return 0;
@@ -46,7 +57,11 @@
     const row = data && data[0];
     if (!row) return;
     state.accountNumber = row.account_number;
-    if (state.subscription) state.subscription.paidUntil = row.paid_until;
+    if (state.subscription) {
+      state.subscription.paidUntil = row.paid_until;
+      state.subscription.coveredAmount = row.covered_amount;
+      state.subscription.coveredEmployees = row.covered_employees;
+    }
   }
   const _fetch = window.fetchAllData;
   window.fetchAllData = async function () { await _fetch(); await loadBilling(); };
@@ -87,6 +102,10 @@
     return openCheckout(t);
   }
   window.payAccountSubscription = openBill;
+  window.topUpSubscription = function () {
+    if (topupAmount() <= 0) { alert("No top-up is needed right now."); return; }
+    return openCheckout("Topup");
+  };
 
   function billTable() {
     const n = headcount();
@@ -114,15 +133,19 @@
       <div class="settings-panel">
         <div style="background:${G};color:#fff;margin:-18px -20px 16px;padding:14px 20px;border-radius:6px 6px 0 0;">
           <div style="font-weight:800;font-size:18px;letter-spacing:.02em;">M-PESA</div>
-          <div style="font-size:12px;opacity:.9;">${esc(tier)} plan &middot; Account <span class="mono">${esc(state.accountNumber || "")}</span></div>
+          <div style="font-size:12px;opacity:.9;">${tier === "Topup" ? "Top-up" : esc(tier) + " plan"} &middot; Account <span class="mono">${esc(state.accountNumber || "")}</span></div>
         </div>
         ${tier === "Test" ? "" : billTable()}
+        ${tier === "Topup" ? `<div style="font-size:12px;color:var(--ink);background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.40);border-radius:6px;padding:10px 12px;margin-bottom:12px;">
+          Your current payment covers <strong>${s.coveredEmployees ?? "?"} employees (${kes(s.coveredAmount)}/month)</strong>.
+          You now have <strong>${n} (${kes(fullPrice(n))}/month)</strong>. Top-up for this payroll cycle
+          (paid until ${fmtDate(s.paidUntil)}): ${kes(fullPrice(n))} &minus; ${kes(s.coveredAmount)}. Your paid-until date stays the same.</div>` : ""}
         <div style="display:flex;justify-content:space-between;align-items:baseline;border-top:2px solid var(--ink);padding-top:8px;margin-bottom:4px;">
-          <span style="font-size:13px;font-weight:600;">Amount due (1 month)</span>
+          <span style="font-size:13px;font-weight:600;">${tier === "Topup" ? "Top-up due" : "Amount due (1 month)"}</span>
           <span class="mono" style="font-size:20px;font-weight:600;">${kes(amount)}</span>
         </div>
         <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px;">
-          ${running ? `Currently paid until ${fmtDate(s.paidUntil)}. This payment adds a month on top.` : "Your plan activates for all your companies once M-Pesa confirms payment."}
+          ${tier === "Topup" ? "" : running ? `Currently paid until ${fmtDate(s.paidUntil)}. This payment adds a month on top.` : "Your plan activates for all your companies once M-Pesa confirms payment."}
         </div>
         <form onsubmit="mpesaSubmitX(event, '${esc(tier)}')">
           <div class="settings-grid">
@@ -180,7 +203,15 @@
     if (row.status !== "SUCCESS") return status(`The payment didn't go through (${row.result_desc || "unknown reason"}).`, true);
     await sleep(1500);
     const fresh = ((await sb.rpc("get_payment_status", { p_checkout: result.checkout_request_id })).data || [])[0] || row;
-    state.subscription.isPaid = true; state.subscription.subscribedTier = tier; state.subscription.paidUntil = fresh.paid_until;
+    const nNow = headcount();
+    if (tier === "Topup") {
+      state.subscription.coveredAmount = fullPrice(nNow);
+      state.subscription.coveredEmployees = nNow;
+      state.subscription.subscribedTier = nNow <= 15 ? "Starter" : "Enterprise";
+    } else {
+      state.subscription.isPaid = true; state.subscription.subscribedTier = tier; state.subscription.paidUntil = fresh.paid_until;
+      state.subscription.coveredAmount = Number(row.mpesa_amount); state.subscription.coveredEmployees = nNow;
+    }
     if (state.activeClient) logAudit("Subscription paid", `${tier} plan, account ${fresh.account_number}, M-Pesa ${row.mpesa_receipt}, ${kes(row.mpesa_amount)}`);
     render();
     openPanel(`
@@ -190,7 +221,7 @@
         <div class="payslip-line"><span>Account number</span><span>${esc(fresh.account_number)}</span></div>
         <div class="payslip-line"><span>M-Pesa receipt</span><span>${esc(row.mpesa_receipt)}</span></div>
         <div class="payslip-line"><span>Amount</span><span>${kes(row.mpesa_amount)}</span></div>
-        <div class="payslip-line"><span>Plan</span><span>${esc(tier)}</span></div>
+        <div class="payslip-line"><span>${tier === "Topup" ? "Payment" : "Plan"}</span><span>${tier === "Topup" ? "Top-up" : esc(tier)}</span></div>
         <div class="payslip-line"><span>Companies covered</span><span>${owned().length}</span></div>
         ${fresh.paid_until ? `<div class="payslip-line total"><span>Active until</span><span>${fmtDate(fresh.paid_until)}</span></div>` : ""}
         <button class="btn primary" style="margin-top:16px;width:100%;" onclick="closePanel()">Done</button>
@@ -217,13 +248,19 @@
     } else {
       text = "<strong>Free trial</strong>: 1 payroll cycle and 1 company";
     }
+    const top = topupAmount();
+    if (top > 0) {
+      text = `<strong>Your team grew to ${n} employees</strong> (paid for ${s.coveredEmployees ?? "fewer"}). Top up this payroll cycle, paid until ${fmtDate(s.paidUntil)}.`;
+      bg = "rgba(245,158,11,0.10)"; border = "rgba(245,158,11,0.40)"; color = "#92400E";
+    }
     const hide = t === "Free" && s.isPaid && s.subscribedTier === "Free";
     if (t === "Free" && !hide) btn = "Activate Free plan";
     return `<div id="mpBillingBarX" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:${bg};border:1px solid ${border};border-radius:6px;padding:10px 14px;margin-bottom:18px;font-size:12.5px;">
       <span style="color:${color};">${text}</span>
       ${state.accountNumber ? `<span style="color:var(--muted);">Account <strong class="mono" style="color:var(--ink);">${esc(state.accountNumber)}</strong></span>` : ""}
       <span style="color:var(--muted);">${n} employee${n === 1 ? "" : "s"}, ${t} plan</span>
-      ${hide ? "" : `<button class="btn" style="margin-left:auto;background:${G};border-color:${G};color:#fff;font-weight:600;" onclick="payAccountSubscription()">${btn}</button>`}
+      ${top > 0 ? `<button class="btn" style="margin-left:auto;background:${G};border-color:${G};color:#fff;font-weight:600;" onclick="topUpSubscription()">Top up ${kes(top)}</button>` : ""}
+      ${hide ? "" : `<button class="btn" style="${top > 0 ? "" : "margin-left:auto;"}${top > 0 ? `border-color:${G};color:${G};` : `background:${G};border-color:${G};color:#fff;font-weight:600;`}" onclick="payAccountSubscription()">${btn}</button>`}
     </div>`;
   }
   const _render = window.render;
