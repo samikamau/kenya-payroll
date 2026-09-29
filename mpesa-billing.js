@@ -38,12 +38,15 @@
 
   // The plan is decided by headcount (owned companies), never chosen
   function billTier() {
-    return getTierForCount(ownedEmployeeTotal()).name;
+    const n = ownedEmployeeTotal();
+    if (n <= 2 && ownedCompanies().length <= 1) return "Free";   // Free = one company, up to 2 employees
+    return n <= 15 ? "Starter" : "Enterprise";
   }
   function billLine(n) {
     const tier = billTier();
-    if (tier === "Free") return `Free plan (up to 2 employees): ${kes(0)}`;
+    if (tier === "Free") return `Free plan (one company, up to 2 employees): ${kes(0)}`;
     if (tier === "Starter") {
+      if (n <= 2) return `Starter minimum: ${kes(500)} (the Free plan covers one company only)`;
       return n <= 5
         ? `Starter, up to 5 employees: ${kes(500)}`
         : `Starter: ${kes(500)} for the first 5 + ${n - 5} &times; ${kes(100)} = ${kes(calcTierPrice("Starter", n))}`;
@@ -86,6 +89,12 @@
   /* ---------- Access gate: expired paid plans must renew ---------- */
   const _origRequireAccess = window.requireAccess;
   window.requireAccess = function (c) {
+    const s0 = state.subscription || {};
+    if (!state.isPlatformAdmin && s0.isPaid && s0.subscribedTier === "Free" && billTier() !== "Free") {
+      alert("Your account has outgrown the Free plan (one company, up to 2 employees). Pay for a subscription to continue.");
+      openBill();
+      return false;
+    }
     if (isExpired()) {
       alert(`Your ${state.subscription.subscribedTier || ""} plan expired on ${fmtDate(state.subscription.paidUntil)}. Renew with M-Pesa to continue.`);
       openBill();
@@ -153,7 +162,7 @@
     const s = state.subscription || {};
     if (tier === "Free") {
       if (s.isPaid && s.subscribedTier === "Free") {
-        alert("Your account is on the Free plan (up to 2 employees). Nothing to pay.");
+        alert("Your account is on the Free plan (one company, up to 2 employees). Nothing to pay.");
         return;
       }
       return _origSubscribe("Free");          // existing Free activation form
@@ -352,7 +361,10 @@
         btnLabel = "Renew";
       }
     } else if (s.isPaid && s.subscribedTier === "Free") {
-      text = `<strong>Free plan</strong>: up to 2 employees and 1 company`;
+      text = billTier() === "Free"
+        ? `<strong>Free plan</strong>: 1 company, up to 2 employees`
+        : `<strong>Free plan outgrown</strong>: pay to keep running payroll`;
+      if (billTier() !== "Free") { tone = "#B3261E"; bg = "rgba(239,68,68,0.08)"; border = "rgba(239,68,68,0.35)"; }
     } else if (s.trialPeriodUsed) {
       text = `<strong>Free trial used</strong> (${esc(s.trialPeriodUsed)}). Subscribe to keep running payroll.`;
       tone = "#B3261E"; bg = "rgba(239,68,68,0.08)"; border = "rgba(239,68,68,0.35)";
