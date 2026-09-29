@@ -149,9 +149,9 @@
     const due = choosable ? periodTotal(amount, defM) : amount;
     const periodPick = !choosable ? "" : `
       <div style="font-size:11px;color:var(--muted);margin:4px 0 6px;">PAY FOR</div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:12px;">
         ${PERIODS.map((p) => `
-          <label style="display:flex;flex-direction:column;gap:2px;border:1.5px solid var(--line);border-radius:8px;padding:9px 10px;cursor:pointer;position:relative;"
+          <label style="display:flex;flex-direction:column;gap:2px;border:1.5px solid var(--line);border-radius:8px;padding:9px 8px;cursor:pointer;position:relative;min-width:0;"
                  class="mp-period">
             <span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink);">
               <input type="radio" name="period" value="${p.m}" ${p.m === defM ? "checked" : ""} onchange="mpPeriodX(${amount})" style="accent-color:${G};margin:0;"/>${p.label}</span>
@@ -231,7 +231,7 @@
     evt.preventDefault();
     if (busy) return;
     const f = evt.target, btn = document.getElementById("mpPayBtnX");
-    const months = Number((f.querySelector('input[name="period"]:checked') || {}).value || 1);
+    const months = Number((document.querySelector('input[name="period"]:checked') || {}).value || 1);
     const sendTier = (tier === "Starter" || tier === "Enterprise") ? `${tier}:${months}` : tier;
     const body = { tier: sendTier, company_id: state.activeClient, phone: f.mpesaPhone.value.trim(),
       first_name: f.firstName.value.trim(), last_name: f.lastName.value.trim(), email: f.email.value.trim(), county: f.county.value };
