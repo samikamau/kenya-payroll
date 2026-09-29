@@ -20,12 +20,26 @@
   function fullPrice(n) {                 // monthly bill for n employees on a paid plan
     return n <= 15 ? (n <= 5 ? 500 : 500 + 100 * (n - 5)) : 1500 + 30 * (n - 15);
   }
+  const PERIODS = [
+    { m: 1, label: "Monthly" },
+    { m: 3, label: "Quarterly" },
+    { m: 12, label: "Annually", note: "10% off" },
+  ];
+  function periodTotal(monthly, m) {      // annual = 12 months less 10%
+    return Math.round(monthly * m * (m === 12 ? 0.9 : 1));
+  }
+  function periodLabel(m) {
+    const p = PERIODS.find((x) => x.m === Number(m));
+    return p ? p.label : "Monthly";
+  }
   function topupAmount() {
     const s = sub();
     if (!(s.isPaid && s.paidUntil && !isExpired() && s.coveredAmount != null)) return 0;
     const diff = fullPrice(headcount()) - Number(s.coveredAmount);
     if (diff <= 0) return 0;
-    return diff;                          // full difference for this payroll cycle (not prorated)
+    // full monthly difference for each remaining month already paid for (no day proration)
+    const cycles = Math.max(1, Math.ceil((new Date(s.paidUntil) - new Date()) / 86400000 / 30));
+    return Math.round(diff * cycles * (Number(s.billingMonths) === 12 ? 0.9 : 1));
   }
   function price(tier, n) {
     if (tier === "Test") return 1;
@@ -61,6 +75,7 @@
       state.subscription.paidUntil = row.paid_until;
       state.subscription.coveredAmount = row.covered_amount;
       state.subscription.coveredEmployees = row.covered_employees;
+      state.subscription.billingMonths = row.billing_months;
     }
   }
   const _fetch = window.fetchAllData;
@@ -129,6 +144,22 @@
     }
     const s = sub(), c = state.clients[state.activeClient];
     const running = s.isPaid && s.paidUntil && !isExpired();
+    const choosable = tier === "Starter" || tier === "Enterprise";
+    const defM = choosable ? (Number(s.billingMonths) || 1) : 1;
+    const due = choosable ? periodTotal(amount, defM) : amount;
+    const periodPick = !choosable ? "" : `
+      <div style="font-size:11px;color:var(--muted);margin:4px 0 6px;">PAY FOR</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">
+        ${PERIODS.map((p) => `
+          <label style="display:flex;flex-direction:column;gap:2px;border:1.5px solid var(--line);border-radius:8px;padding:9px 10px;cursor:pointer;position:relative;"
+                 class="mp-period">
+            <span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink);">
+              <input type="radio" name="period" value="${p.m}" ${p.m === defM ? "checked" : ""} onchange="mpPeriodX(${amount})" style="accent-color:${G};margin:0;"/>${p.label}</span>
+            <span class="mono" style="font-size:12.5px;color:var(--ink);">${kes(periodTotal(amount, p.m))}</span>
+            <span style="font-size:10.5px;color:var(--muted);">${p.m === 1 ? "1 month" : p.m + " months"}</span>
+            ${p.note ? `<span style="position:absolute;top:-8px;right:8px;background:${G};color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;">${p.note}</span>` : ""}
+          </label>`).join("")}
+      </div>`;
     openPanel(`
       <div class="settings-panel">
         <div style="background:${G};color:#fff;margin:-18px -20px 16px;padding:14px 20px;border-radius:6px 6px 0 0;">
@@ -140,12 +171,13 @@
           Your current payment covers <strong>${s.coveredEmployees ?? "?"} employees (${kes(s.coveredAmount)}/month)</strong>.
           You now have <strong>${n} (${kes(fullPrice(n))}/month)</strong>. Top-up for this payroll cycle
           (paid until ${fmtDate(s.paidUntil)}): ${kes(fullPrice(n))} &minus; ${kes(s.coveredAmount)}. Your paid-until date stays the same.</div>` : ""}
+        ${periodPick}
         <div style="display:flex;justify-content:space-between;align-items:baseline;border-top:2px solid var(--ink);padding-top:8px;margin-bottom:4px;">
-          <span style="font-size:13px;font-weight:600;">${tier === "Topup" ? "Top-up due" : "Amount due (1 month)"}</span>
-          <span class="mono" style="font-size:20px;font-weight:600;">${kes(amount)}</span>
+          <span id="mpDueLabelX" style="font-size:13px;font-weight:600;">${tier === "Topup" ? "Top-up due" : choosable ? `Amount due (${periodLabel(defM).toLowerCase()})` : "Amount due (1 month)"}</span>
+          <span id="mpDueX" class="mono" style="font-size:20px;font-weight:600;">${kes(due)}</span>
         </div>
         <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px;">
-          ${tier === "Topup" ? "" : running ? `Currently paid until ${fmtDate(s.paidUntil)}. This payment adds a month on top.` : "Your plan activates for all your companies once M-Pesa confirms payment."}
+          ${tier === "Topup" ? "" : running ? `Currently paid until ${fmtDate(s.paidUntil)}. This payment adds the months you choose on top.` : "Your plan activates for all your companies once M-Pesa confirms payment."}
         </div>
         <form onsubmit="mpesaSubmitX(event, '${esc(tier)}')">
           <div class="settings-grid">
@@ -163,11 +195,23 @@
           <label style="display:flex;align-items:flex-start;gap:8px;font-size:11.5px;color:var(--muted);margin-top:14px;">
             <input type="checkbox" name="tosAgree" required style="margin-top:2px;accent-color:${G};"/>
             I have read and understood Edhafu Payroll's Terms of Service</label>
-          <button id="mpPayBtnX" type="submit" class="btn" style="margin-top:16px;width:100%;background:${G};border-color:${G};color:#fff;font-weight:700;font-size:14px;padding:11px;">Pay ${kes(amount)} with M-Pesa</button>
+          <button id="mpPayBtnX" type="submit" class="btn" style="margin-top:16px;width:100%;background:${G};border-color:${G};color:#fff;font-weight:700;font-size:14px;padding:11px;">Pay ${kes(due)} with M-Pesa</button>
           <div id="mpStatusX" role="status" aria-live="polite" style="margin-top:12px;font-size:12.5px;min-height:18px;"></div>
         </form>
       </div>`);
+    if (choosable) window.mpPeriodX(amount);   // highlight the default choice
   }
+  window.mpPeriodX = function (monthly) {
+    const m = Number((document.querySelector('input[name="period"]:checked') || {}).value || 1);
+    const total = periodTotal(monthly, m);
+    const due = document.getElementById("mpDueX"), label = document.getElementById("mpDueLabelX"), btn = document.getElementById("mpPayBtnX");
+    if (due) due.textContent = kes(total);
+    if (label) label.textContent = `Amount due (${periodLabel(m).toLowerCase()})`;
+    if (btn) btn.textContent = `Pay ${kes(total)} with M-Pesa`;
+    document.querySelectorAll(".mp-period").forEach((el) => {
+      el.style.borderColor = el.querySelector("input").checked ? G : "var(--line)";
+    });
+  };
   function status(msg, err) {
     const el = document.getElementById("mpStatusX");
     if (!el) return;
@@ -187,7 +231,9 @@
     evt.preventDefault();
     if (busy) return;
     const f = evt.target, btn = document.getElementById("mpPayBtnX");
-    const body = { tier, company_id: state.activeClient, phone: f.mpesaPhone.value.trim(),
+    const months = Number((f.querySelector('input[name="period"]:checked') || {}).value || 1);
+    const sendTier = (tier === "Starter" || tier === "Enterprise") ? `${tier}:${months}` : tier;
+    const body = { tier: sendTier, company_id: state.activeClient, phone: f.mpesaPhone.value.trim(),
       first_name: f.firstName.value.trim(), last_name: f.lastName.value.trim(), email: f.email.value.trim(), county: f.county.value };
     busy = true; btn.disabled = true;
     status("Sending the payment prompt to your phone...");
@@ -210,9 +256,10 @@
       state.subscription.subscribedTier = nNow <= 15 ? "Starter" : "Enterprise";
     } else {
       state.subscription.isPaid = true; state.subscription.subscribedTier = tier; state.subscription.paidUntil = fresh.paid_until;
-      state.subscription.coveredAmount = Number(row.mpesa_amount); state.subscription.coveredEmployees = nNow;
+      state.subscription.coveredAmount = fullPrice(nNow); state.subscription.coveredEmployees = nNow;
+      state.subscription.billingMonths = months;
     }
-    if (state.activeClient) logAudit("Subscription paid", `${tier} plan, account ${fresh.account_number}, M-Pesa ${row.mpesa_receipt}, ${kes(row.mpesa_amount)}`);
+    if (state.activeClient) logAudit("Subscription paid", `${sendTier} plan, account ${fresh.account_number}, M-Pesa ${row.mpesa_receipt}, ${kes(row.mpesa_amount)}`);
     render();
     openPanel(`
       <div class="settings-panel" style="position:relative;">
@@ -221,7 +268,7 @@
         <div class="payslip-line"><span>Account number</span><span>${esc(fresh.account_number)}</span></div>
         <div class="payslip-line"><span>M-Pesa receipt</span><span>${esc(row.mpesa_receipt)}</span></div>
         <div class="payslip-line"><span>Amount</span><span>${kes(row.mpesa_amount)}</span></div>
-        <div class="payslip-line"><span>${tier === "Topup" ? "Payment" : "Plan"}</span><span>${tier === "Topup" ? "Top-up" : esc(tier)}</span></div>
+        <div class="payslip-line"><span>${tier === "Topup" ? "Payment" : "Plan"}</span><span>${tier === "Topup" ? "Top-up" : esc(tier) + (tier === "Test" ? "" : ", " + periodLabel(months).toLowerCase())}</span></div>
         <div class="payslip-line"><span>Companies covered</span><span>${owned().length}</span></div>
         ${fresh.paid_until ? `<div class="payslip-line total"><span>Active until</span><span>${fmtDate(fresh.paid_until)}</span></div>` : ""}
         <button class="btn primary" style="margin-top:16px;width:100%;" onclick="closePanel()">Done</button>
@@ -232,14 +279,14 @@
   function barHtml() {
     const s = sub(), n = headcount(), t = billTier(), amt = price(t, n);
     const d = s.paidUntil ? Math.ceil((new Date(s.paidUntil) - new Date()) / 86400000) : null;
-    let text, bg = "var(--panel)", border = "var(--line)", color = "var(--ink)", btn = `Pay ${kes(amt)}`;
+    let text, bg = "var(--panel)", border = "var(--line)", color = "var(--ink)", btn = `Pay from ${kes(amt)}/mo`;
     const red = () => { bg = "rgba(239,68,68,0.08)"; border = "rgba(239,68,68,0.35)"; color = "#B3261E"; };
     if (s.isPaid && s.subscribedTier !== "Free") {
       const tier = esc(s.subscribedTier || "Paid");
       if (!s.paidUntil) text = `<strong>${tier}</strong> plan, active`;
-      else if (d <= 0) { text = `<strong>${tier}</strong> plan <strong>expired on ${fmtDate(s.paidUntil)}</strong>`; red(); btn = `Renew ${kes(amt)}`; }
-      else if (d <= 7) { text = `<strong>${tier}</strong> plan, expires <strong>${fmtDate(s.paidUntil)}</strong> (${d} day${d === 1 ? "" : "s"} left)`; bg = "rgba(245,158,11,0.10)"; border = "rgba(245,158,11,0.40)"; color = "#92400E"; btn = `Renew ${kes(amt)}`; }
-      else { text = `<strong>${tier}</strong> plan, paid until <strong>${fmtDate(s.paidUntil)}</strong>`; btn = `Renew ${kes(amt)}`; }
+      else if (d <= 0) { text = `<strong>${tier}</strong> plan <strong>expired on ${fmtDate(s.paidUntil)}</strong>`; red(); btn = "Renew"; }
+      else if (d <= 7) { text = `<strong>${tier}</strong> plan, expires <strong>${fmtDate(s.paidUntil)}</strong> (${d} day${d === 1 ? "" : "s"} left)`; bg = "rgba(245,158,11,0.10)"; border = "rgba(245,158,11,0.40)"; color = "#92400E"; btn = "Renew"; }
+      else { text = `<strong>${tier}</strong> plan${s.billingMonths && Number(s.billingMonths) > 1 ? ` (${periodLabel(s.billingMonths).toLowerCase()})` : ""}, paid until <strong>${fmtDate(s.paidUntil)}</strong>`; btn = "Renew"; }
     } else if (s.isPaid && s.subscribedTier === "Free") {
       if (t === "Free") text = "<strong>Free plan</strong>: 1 company, up to 2 employees";
       else { text = "<strong>Free plan outgrown</strong>: pay to keep running payroll"; red(); }
