@@ -36,6 +36,35 @@
     return t && t !== "Free" && t !== "Test" ? t : suggestTier();
   }
 
+  // The plan is decided by headcount (owned companies), never chosen
+  function billTier() {
+    return getTierForCount(ownedEmployeeTotal()).name;
+  }
+  function billLine(n) {
+    const tier = billTier();
+    if (tier === "Free") return `Free plan (up to 2 employees): ${kes(0)}`;
+    if (tier === "Starter") {
+      return n <= 5
+        ? `Starter, up to 5 employees: ${kes(500)}`
+        : `Starter: ${kes(500)} for the first 5 + ${n - 5} &times; ${kes(100)} = ${kes(calcTierPrice("Starter", n))}`;
+    }
+    return `Enterprise: ${kes(1500)} for the first 15 + ${n - 15} &times; ${kes(30)} = ${kes(calcTierPrice("Enterprise", n))}`;
+  }
+  function billTableHtml() {
+    const n = ownedEmployeeTotal();
+    const rows = ownedCompanies().map((c) => {
+      const k = c.employees.filter((e) => e.name && e.name.trim() && e.employmentStatus !== "Terminated").length;
+      return `<div class="payslip-line"><span>${esc(c.name || "Company")}</span><span>${k}</span></div>`;
+    }).join("");
+    return `
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">ACTIVE EMPLOYEES</div>
+        ${rows}
+        <div class="payslip-line total"><span>Total</span><span>${n}</span></div>
+        <div style="font-size:12px;color:var(--ink);margin-top:8px;">${billLine(n)}</div>
+      </div>`;
+  }
+
   /* ---------- Load account number and paid-until ---------- */
   async function loadBilling() {
     const { data } = await sb.rpc("get_my_subscriber");
@@ -59,7 +88,7 @@
   window.requireAccess = function (c) {
     if (isExpired()) {
       alert(`Your ${state.subscription.subscribedTier || ""} plan expired on ${fmtDate(state.subscription.paidUntil)}. Renew with M-Pesa to continue.`);
-      openMpesaCheckout(realTier(state.subscription.subscribedTier));
+      openBill();
       return false;
     }
     return _origRequireAccess(c);
@@ -68,17 +97,25 @@
   /* ---------- Plan section: account number, paid until, Renew ---------- */
   const _origPlan = window.renderPlanSection;
   window.renderPlanSection = function (c) {
-    let html = _origPlan(c);
+    const n0 = ownedEmployeeTotal();
+    const tier0 = billTier();
+    const amt0 = tier0 === "Free" ? 0 : calcTierPrice(tier0, n0);
+    let html = `
+      <h3 style="font-size:13px;color:var(--gold);font-family:'Inter',sans-serif;font-weight:600;margin-top:22px;margin-bottom:10px;">Plan &amp; billing</h3>
+      ${billTableHtml()}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:2px solid var(--ink);padding-top:8px;">
+        <span style="font-weight:600;">Monthly bill</span>
+        <span class="mono" style="font-weight:600;">${kes(amt0)}</span>
+      </div>
+      ${tier0 === "Free" && !(state.subscription.isPaid && state.subscription.subscribedTier === "Free")
+        ? `<button class="btn" style="margin-top:10px;width:100%;" onclick="openPlanChooser()">Activate Free plan</button>`
+        : tier0 !== "Free" ? `<button class="btn" style="margin-top:10px;width:100%;background:${MPESA_GREEN};border-color:${MPESA_GREEN};color:#fff;font-weight:700;" onclick="openPlanChooser()">Pay ${kes(amt0)} with M-Pesa</button>` : ""}`;
     const s = state.subscription || {};
     const exp = isExpired();
     html += `
       <div style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;">
         ${state.accountNumber ? `<span style="color:var(--muted);">Account <strong class="mono" style="color:var(--ink);">${esc(state.accountNumber)}</strong></span>` : ""}
         ${s.isPaid && s.paidUntil ? `<span style="color:${exp ? "#EF4444" : "var(--muted)"};">${exp ? "Expired on" : "Paid until"} <strong>${fmtDate(s.paidUntil)}</strong></span>` : ""}
-        ${s.isPaid && s.subscribedTier && s.subscribedTier !== "Free"
-          ? `<button class="btn" style="font-size:11.5px;padding:5px 10px;border-color:${MPESA_GREEN};color:${MPESA_GREEN};"
-               onclick="subscribeToTier('${esc(realTier(s.subscribedTier))}')">Renew with M-Pesa</button>`
-          : ""}
       </div>`;
     return html;
   };
@@ -107,9 +144,22 @@
   /* ---------- Subscribe: Free keeps the old flow, paid plans go to M-Pesa ---------- */
   const _origSubscribe = window.subscribeToTier;
   window.subscribeToTier = function (tierName) {
-    if (tierName === "Free") return _origSubscribe(tierName);
-    return openMpesaCheckout(tierName);
+    if (tierName === "Test") return openMpesaCheckout("Test");
+    return openBill();
   };
+  // One exact bill based on headcount
+  function openBill() {
+    const tier = billTier();
+    const s = state.subscription || {};
+    if (tier === "Free") {
+      if (s.isPaid && s.subscribedTier === "Free") {
+        alert("Your account is on the Free plan (up to 2 employees). Nothing to pay.");
+        return;
+      }
+      return _origSubscribe("Free");          // existing Free activation form
+    }
+    return openMpesaCheckout(tier);
+  }
 
   async function openMpesaCheckout(tierName) {
     if (!state.accountNumber) await loadBilling();
@@ -136,8 +186,9 @@
           <div style="font-weight:800;font-size:18px;letter-spacing:.02em;">M-PESA</div>
           <div style="font-size:12px;opacity:.9;">${esc(tierName)} plan &middot; Account <span class="mono">${esc(state.accountNumber || "")}</span></div>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
-          <span style="font-size:12.5px;color:var(--muted);">${n} active employee${n === 1 ? "" : "s"} across ${companies} compan${companies === 1 ? "y" : "ies"} &middot; 1 month</span>
+        ${tierName === "Test" ? "" : billTableHtml()}
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;border-top:2px solid var(--ink);padding-top:8px;">
+          <span style="font-size:13px;font-weight:600;color:var(--ink);">Amount due (1 month)</span>
           <span class="mono" style="font-size:20px;font-weight:600;color:var(--ink);">${kes(amount)}</span>
         </div>
         <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px;">
@@ -309,13 +360,21 @@
       text = `<strong>Free trial</strong>: 1 payroll cycle and 1 company`;
     }
 
+    const n = ownedEmployeeTotal();
+    const tier = billTier();
+    const amt = tier === "Free" ? 0 : calcTierPrice(tier, n);
+    const hideBtn = tier === "Free" && s.isPaid && s.subscribedTier === "Free";
+    if (tier !== "Free") btnLabel = `${btnLabel === "Pay Subscription" ? "Pay" : btnLabel} ${kes(amt)}`;
+    else if (!hideBtn) btnLabel = "Activate Free plan";
+    const billNote = `<span style="color:var(--muted);">${n} employee${n === 1 ? "" : "s"}, ${tier} plan</span>`;
     return `
       <div id="mpBillingBar" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;
            background:${bg};border:1px solid ${border};border-radius:6px;padding:10px 14px;margin-bottom:18px;font-size:12.5px;">
         <span style="color:${tone};">${text}</span>
         ${acct}
-        <button class="btn" style="margin-left:auto;background:${MPESA_GREEN};border-color:${MPESA_GREEN};color:#fff;font-weight:600;"
-          onclick="openPlanChooser()">${btnLabel}</button>
+        ${billNote}
+        ${hideBtn ? "" : `<button class="btn" style="margin-left:auto;background:${MPESA_GREEN};border-color:${MPESA_GREEN};color:#fff;font-weight:600;"
+          onclick="openPlanChooser()">${btnLabel}</button>`}
       </div>`;
   }
 
@@ -329,45 +388,7 @@
   };
 
   // ---- Plan chooser ----
-  window.openPlanChooser = function () {
-    const n = ownedEmployeeTotal();
-    const s = state.subscription || {};
-    const recommended = n > 15 ? "Enterprise" : "Starter";
-    const card = (name, note) => {
-      const blocked = name === "Starter" && n > 15;
-      const price = calcTierPrice(name, n);
-      const current = s.isPaid && s.subscribedTier === name;
-      return `
-        <div style="border:1px solid ${name === recommended ? MPESA_GREEN : "var(--line)"};border-radius:8px;padding:14px 16px;margin-bottom:10px;${blocked ? "opacity:.55;" : ""}">
-          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;">
-            <div>
-              <div style="font-weight:600;color:var(--ink);font-size:14px;">${name}
-                ${name === recommended ? `<span style="font-size:10.5px;color:${MPESA_GREEN};font-weight:700;margin-left:6px;">RECOMMENDED</span>` : ""}
-                ${current ? `<span style="font-size:10.5px;color:var(--gold);font-weight:700;margin-left:6px;">CURRENT</span>` : ""}
-              </div>
-              <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">${note}</div>
-            </div>
-            <div class="mono" style="font-size:17px;font-weight:600;color:var(--ink);white-space:nowrap;">${kes(price)}<span style="font-size:11px;color:var(--muted);">/mo</span></div>
-          </div>
-          <button class="btn" ${blocked ? "disabled" : ""} onclick="subscribeToTier('${name}')"
-            style="margin-top:12px;width:100%;background:${MPESA_GREEN};border-color:${MPESA_GREEN};color:#fff;font-weight:700;">
-            ${blocked ? "Covers up to 15 employees" : (current ? "Renew" : "Pay") + " " + kes(price) + " with M-Pesa"}
-          </button>
-        </div>`;
-    };
-    openPanel(`
-      <div class="settings-panel">
-        <h3 style="font-size:15px;color:var(--gold);font-family:'Fraunces',serif;font-weight:600;margin-bottom:4px;">Pay Subscription</h3>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">
-          ${state.accountNumber ? `Account <strong class="mono" style="color:var(--ink);">${esc(state.accountNumber)}</strong> &middot; ` : ""}
-          ${n} active employee${n === 1 ? "" : "s"} across ${ownedCompanies().length} compan${ownedCompanies().length === 1 ? "y" : "ies"}.
-          ${s.isPaid && s.paidUntil && !isExpired() ? `Paid until ${fmtDate(s.paidUntil)}, paying adds a month on top.` : "Each payment covers one month, all your companies."}
-        </div>
-        ${card("Starter", "3 to 15 employees, unlimited companies, full features")}
-        ${card("Enterprise", "16+ employees, unlimited companies, full features")}
-        ${n <= 2 ? `<div style="font-size:11.5px;color:var(--muted);margin-top:6px;">With ${n} employee${n === 1 ? "" : "s"} you can also stay on the <a style="color:var(--gold);cursor:pointer;" onclick="subscribeToTier('Free')">Free plan</a> (1 company, no branding).</div>` : ""}
-      </div>`);
-  };
+  window.openPlanChooser = function () { openBill(); };
 
   // ---- One company on free trial / Free plan ----
   const _origAddClient = window.addClient;
