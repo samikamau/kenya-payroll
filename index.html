@@ -1806,7 +1806,7 @@ function renderSharePanel(c){
       ${shares.map(s => `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px;">
           <span>${esc(s.email)}</span>
-          ${isOwner ? `<span style="color:#EF4444;cursor:pointer;font-size:11.5px;" onclick="revokeShare('${s.id}', '${esc(s.email)}')">Remove</span>` : ''}
+          ${isOwner ? `<span style="color:#EF4444;cursor:pointer;font-size:11.5px;" onclick="revokeShare('${s.id}', '${esc(s.email).replace(/'/g,"\\\\'")}')">Remove</span>` : ''}
         </div>
       `).join('')}
       ${isOwner ? `<button class="btn primary" style="margin-top:14px;" onclick="shareCompanyWithColleague()">+ Share with a colleague</button>` : ''}
@@ -1987,7 +1987,15 @@ function closeDrawer(){
 }
 
 function downloadCSV(rows, filename){
-  const csv = rows.map(row => row.map(v => `"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  // Guards against CSV/formula injection: if a value starts with =, +, -, @, or a tab/CR,
+  // spreadsheet software can interpret it as a formula rather than plain text when the file
+  // is later opened - a well-known attack if a malicious name or note ever reaches an export.
+  // Prefixing with a single quote forces Excel/Sheets to treat it as literal text instead.
+  const safeCell = v => {
+    const s = String(v??'');
+    return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  };
+  const csv = rows.map(row => row.map(v => `"${safeCell(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], { type:'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
