@@ -326,8 +326,9 @@
       <input type="checkbox" id="authCommsOptIn" />
       <label for="authCommsOptIn">Send me product updates, tips, and other communications from Edhafu Payroll.</label>
     </div>
-    <div class="auth-signup-only" style="display:none;font-size:11px;color:var(--muted);margin:-6px 0 14px;">
-      By creating an account, you agree to our <a href="https://edhafu.com/legal/terms/" target="_blank" rel="noopener noreferrer" style="color:var(--gold);">Terms of Service</a> and <a href="https://edhafu.com/legal/privacy/" target="_blank" rel="noopener noreferrer" style="color:var(--gold);">Privacy Policy</a>.
+    <div class="auth-checkbox-row auth-signup-only" style="display:none;">
+      <input type="checkbox" id="authTosAgree" />
+      <label for="authTosAgree">I agree to Edhafu Payroll's <a href="https://edhafu.com/legal/terms/" target="_blank" rel="noopener noreferrer" style="color:var(--gold);">Terms of Service</a> and <a href="https://edhafu.com/legal/privacy/" target="_blank" rel="noopener noreferrer" style="color:var(--gold);">Privacy Policy</a>.</label>
     </div>
     <button class="btn primary" style="width:100%;" id="authSubmit" onclick="handleAuthSubmit()">Sign in</button>
     <div class="auth-toggle" id="authToggle">No account yet? <a onclick="toggleAuthMode()">Create one</a></div>
@@ -710,17 +711,19 @@ async function handleAuthSubmit(){
   const phone = document.getElementById('authPhone').value.trim();
   const employeeCount = document.getElementById('authEmployeeCount').value.trim();
   const commsOptIn = document.getElementById('authCommsOptIn').checked;
+  const tosAgree = document.getElementById('authTosAgree').checked;
 
   if(!fullName){ showAuthError('Enter your full name.'); return; }
   if(!email || !password){ showAuthError('Enter an email and password.'); return; }
   if(!company){ showAuthError('Enter your company name.'); return; }
   if(!phone){ showAuthError('Enter your telephone number.'); return; }
   if(!employeeCount || parseInt(employeeCount, 10) < 1){ showAuthError('Enter your number of employees.'); return; }
+  if(!tosAgree){ showAuthError('You must agree to the Terms of Service and Privacy Policy to create an account.'); return; }
   if(password.length < 8){ showAuthError('Password must be at least 8 characters.'); return; }
 
   const { data, error } = await sb.auth.signUp({
     email, password,
-    options: { data: { full_name: fullName, company, phone, employee_count: parseInt(employeeCount, 10), comms_opt_in: commsOptIn } }
+    options: { data: { full_name: fullName, company, phone, employee_count: parseInt(employeeCount, 10), comms_opt_in: commsOptIn, tos_accepted_version: 'v1.0' } }
   });
   if(error){
     // Some Supabase configurations return an explicit error for a duplicate email.
@@ -739,6 +742,12 @@ async function handleAuthSubmit(){
     showAuthError('An account with this email already exists. Try signing in instead, or use "Forgot password" if you\'ve forgotten it.');
     return;
   }
+
+  // The actual timestamped acceptance record is written on first successful login instead
+  // of here, since email confirmation may be pending right now, meaning there's no active
+  // session yet for the database to verify this write against. tos_accepted_version above
+  // is stored as part of account creation itself, which succeeds regardless of confirmation
+  // status, and boot() uses it to write the real audit record once a session actually exists.
   showAuthError('Account created. Check your email if confirmation is required, then sign in.');
 }
 async function handleForgotPassword(){
@@ -1042,6 +1051,22 @@ async function boot(){
   const { data: isAdmin } = await sb.rpc('is_platform_admin');
   state.isPlatformAdmin = isAdmin === true;
   document.getElementById('adminBtn').style.display = state.isPlatformAdmin ? 'block' : 'none';
+
+  // Write the actual legal acceptance record on first login after signup, now that a real
+  // session exists to verify the write against. tos_accepted_version was stored at signup
+  // regardless of email confirmation status; tos_recorded then prevents re-checking or
+  // re-inserting on every subsequent login once this has been written once.
+  const meta = session.user.user_metadata || {};
+  if(meta.tos_accepted_version && !meta.tos_recorded){
+    const { error: acceptError } = await sb.from('legal_acceptances').insert([
+      { user_id: session.user.id, document: 'terms', version: meta.tos_accepted_version },
+      { user_id: session.user.id, document: 'privacy', version: meta.tos_accepted_version }
+    ]);
+    if(!acceptError){
+      await sb.auth.updateUser({ data: { tos_recorded: true } });
+    }
+  }
+
   await fetchAllData();
   render();
   if(state.activeClient){
