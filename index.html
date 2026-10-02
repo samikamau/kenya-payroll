@@ -2043,6 +2043,15 @@ function exportKRA(){
   downloadCSV(rows, `${(c.name||'client').replace(/\s+/g,'_')}_P10A_${c.period||''}.csv`);
 }
 
+// NSSF and SHA both expect a genuinely numeric ID NO cell, not a text cell that merely looks
+// numeric - confirmed by comparing a failing export against a known-working one, where the
+// only difference was this column's stored type (text vs number), not its visible value.
+// Converts to a real number only when the value is purely digits (a Kenyan National ID),
+// since passport numbers can contain letters and must stay as text for those employees.
+function idNoForExport(idNumber){
+  if(idNumber && /^\d+$/.test(idNumber)) return Number(idNumber);
+  return idNumber || '';
+}
 async function exportNSSF(evt){
   // Matches the NSSF new-format upload: PAYROLL NUMBER, SURNAME, OTHER NAMES, ID NO, KRA PIN, NSSF NO, GROSS PAY, VOLUNTARY
   const c = state.clients[state.activeClient];
@@ -2056,7 +2065,7 @@ async function exportNSSF(evt){
       const r = calcEmployee(e);
       return {
         'PAYROLL NUMBER': e.payrollNumber||'', 'SURNAME': surname, 'OTHER NAMES': otherNames,
-        'ID NO': e.idNumber||'', 'KRA PIN': e.pin||'', 'NSSF NO': e.nssfNo||'',
+        'ID NO': idNoForExport(e.idNumber), 'KRA PIN': e.pin||'', 'NSSF NO': e.nssfNo||'',
         'GROSS PAY': Math.round(r.gross), 'VOLUNTARY': 0
       };
     });
@@ -2084,7 +2093,7 @@ async function exportSHA(evt){
       const r = calcEmployee(e);
       return {
         'PAYROLL NUMBER': e.payrollNumber||'', 'FIRSTNAME': otherNames, 'LASTNAME': surname,
-        'IDENTITY TYPE': e.identityType||'National ID', 'ID NO': e.idNumber||'', 'KRA PIN': e.pin||'',
+        'IDENTITY TYPE': e.identityType||'National ID', 'ID NO': idNoForExport(e.idNumber), 'KRA PIN': e.pin||'',
         'NHIF NO': e.shaNo||'', 'CONTRIBUTION AMOUNT': Math.round(r.shif), 'PHONE': e.phone||''
       };
     });
