@@ -2072,7 +2072,7 @@ async function exportNSSF(evt){
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Worksheet'); // Matches the exact sheet name NSSF's own template uses - confirmed by comparing against a known-working file
-    XLSX.writeFile(wb, `${(c.name||'client').replace(/\s+/g,'_')}_NSSF_${c.period||''}.xlsx`);
+    XLSX.writeFile(wb, `${(c.name||'client').replace(/\s+/g,'_')}_NSSF_${c.period||''}.xlsx`, { bookSST: true }); // Matches NSSF's own file's string encoding (shared strings, not inline) - confirmed by direct XML comparison against a known-working upload
   } catch(err){
     alert('Could not build the Excel file: ' + err.message);
   } finally {
@@ -2100,7 +2100,7 @@ async function exportSHA(evt){
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Worksheet'); // Matches the exact sheet name SHA's own template uses, same convention confirmed for NSSF
-    XLSX.writeFile(wb, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_${c.period||''}.xlsx`);
+    XLSX.writeFile(wb, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_${c.period||''}.xlsx`, { bookSST: true }); // Same encoding fix confirmed for NSSF, applied here for consistency and the same portal-compatibility reasoning
   } catch(err){
     alert('Could not build the Excel file: ' + err.message);
   } finally {
@@ -2863,7 +2863,7 @@ async function downloadWagesExcel(evt){
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Wages');
-    XLSX.writeFile(wb, `${(c.name||'wages').replace(/\s+/g,'_')}_wages_register.xlsx`);
+    XLSX.writeFile(wb, `${(c.name||'wages').replace(/\s+/g,'_')}_wages_register.xlsx`, { bookSST: true }); // Same encoding fix as NSSF/SHA, applied for consistency even though this export hasn't been reported as failing
   } catch(err){
     alert('Could not build the Excel file: ' + err.message);
   } finally {
