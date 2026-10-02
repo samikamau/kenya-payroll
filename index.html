@@ -2071,7 +2071,7 @@ async function exportNSSF(evt){
     });
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'NSSF');
+    XLSX.utils.book_append_sheet(wb, ws, 'Worksheet'); // Matches the exact sheet name NSSF's own template uses - confirmed by comparing against a known-working file
     XLSX.writeFile(wb, `${(c.name||'client').replace(/\s+/g,'_')}_NSSF_${c.period||''}.xlsx`);
   } catch(err){
     alert('Could not build the Excel file: ' + err.message);
@@ -2099,7 +2099,7 @@ async function exportSHA(evt){
     });
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'SHA_SHIF');
+    XLSX.utils.book_append_sheet(wb, ws, 'Worksheet'); // Matches the exact sheet name SHA's own template uses, same convention confirmed for NSSF
     XLSX.writeFile(wb, `${(c.name||'client').replace(/\s+/g,'_')}_SHA_SHIF_${c.period||''}.xlsx`);
   } catch(err){
     alert('Could not build the Excel file: ' + err.message);
